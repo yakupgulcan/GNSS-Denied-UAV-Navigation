@@ -4,14 +4,14 @@ import os
 import json
 from skimage.feature import hog
 
-# --- EN YÜKSEK AYARLAR (MAX DETAIL) ---
-# Bu ayarlar hog_detect_match.py ile BİREBİR AYNI OLMALI
+# --- HIGHEST SETTINGS (MAX DETAIL) ---
+# These settings MUST BE IDENTICAL to hog_detect_match.py
 TARGET_WIDTH = 480
 TARGET_HEIGHT = 360
 
 HOG_ORIENTATIONS = 9
-# (8, 8) hücre boyutu, (16, 16)'ya göre çok daha ince detayları yakalar.
-HOG_PIXELS_PER_CELL = (16, 16) # Yüksek Detay
+# (8, 8) cell size captures much finer details than (16, 16).
+HOG_PIXELS_PER_CELL = (16, 16) # High Detail
 HOG_CELLS_PER_BLOCK = (2, 2)
 
 frames_path = "~/frames_2026-01-09_08-47-17"
@@ -25,16 +25,16 @@ def build_hog_database(frames_dir):
     json_path = os.path.join(frames_dir, "frames_details.json")
     
     if not os.path.exists(json_path):
-        print(f"HATA: {json_path} yok.")
+        print(f"ERROR: {json_path} does not exist.")
         return
 
     with open(json_path) as f:
         frames_info = json.load(f)
 
     print("-" * 40)
-    print(f"YÜKSEK DETAYLI HOG Veritabanı Oluşturuluyor...")
-    print(f"Hedef Boyut: {TARGET_WIDTH}x{TARGET_HEIGHT}")
-    print(f"Hücre Boyutu: {HOG_PIXELS_PER_CELL} (Daha küçük = Daha hassas)")
+    print(f"Building HIGH DETAIL HOG Database...")
+    print(f"Target Size: {TARGET_WIDTH}x{TARGET_HEIGHT}")
+    print(f"Cell Size: {HOG_PIXELS_PER_CELL} (Smaller = More Precise)")
     print("-" * 40)
 
     count = 0
@@ -45,10 +45,10 @@ def build_hog_database(frames_dir):
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None: continue
 
-        # 1. RESIZE (Garanti olsun diye 640x480'e zorluyoruz)
+        # 1. RESIZE (Forcing to 640x480 for consistency, wait, target width is 480)
         img_resized = cv2.resize(img, (TARGET_WIDTH, TARGET_HEIGHT))
 
-        # 2. HOG HESAPLA (Yüksek Detay Ayarlarıyla)
+        # 2. COMPUTE HOG (With High Detail Settings)
         try:
             features = hog(img_resized, 
                            orientations=HOG_ORIENTATIONS, 
@@ -57,7 +57,7 @@ def build_hog_database(frames_dir):
                            visualize=False, 
                            feature_vector=True)
         except Exception as e:
-            print(f"Hata: {e}")
+            print(f"Error: {e}")
             continue
 
         if features is None: continue
@@ -68,13 +68,13 @@ def build_hog_database(frames_dir):
         headings_db.append(entry.get("heading", 0.0))
         
         count += 1
-        if count % 50 == 0: print(f"{count} işlendi...") # Daha sık bilgi ver
+        if count % 50 == 0: print(f"{count} processed...") # Log frequently
 
     if not hog_features_db:
-         print("Hata: Özellik çıkarılamadı.")
+         print("Error: No features extracted.")
          return
 
-    # Kaydet (İsim maxres oldu)
+    # Save
     output_path = os.path.join(frames_dir, "features_db_hog_480_360_16.npz")
     
     np.savez_compressed(
@@ -85,10 +85,10 @@ def build_hog_database(frames_dir):
         headings=np.array(headings_db, dtype=np.float32)
     )
     print("=" * 40)
-    print(f"TAMAMLANDI! Toplam {len(filenames)} görüntü işlendi.")
-    # Vektör boyutu (8,8) ayarıyla bayağı büyüyecektir (tahmini 15000+), bu normaldir.
-    print(f"HOG Vektör Boyutu (Hassasiyet): {len(hog_features_db[0])}") 
-    print(f"Dosya: {output_path}")
+    print(f"COMPLETED! Processed {len(filenames)} images total.")
+    # The vector size will be quite large with (8,8) setting (est. 15000+), which is normal.
+    print(f"HOG Vector Size (Precision): {len(hog_features_db[0])}") 
+    print(f"File: {output_path}")
     print("=" * 40)
 
 if __name__ == "__main__":

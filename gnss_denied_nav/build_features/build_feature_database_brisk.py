@@ -3,14 +3,14 @@ import numpy as np
 import os
 import json
 
-# --- PERFORMANS AYARLARI ---
+# --- PERFORMANCE SETTINGS ---
 frames_path = "~/frames_2026-01-09_08-47-17"
-BRISK_THRESH = 60    # Eşiği artırdık (Daha az ama öz nokta)
-BRISK_OCTAVES = 0    # 0 = Sadece orijinal boyutta tara (ÇOK HIZLI)
+BRISK_THRESH = 60    # Increased threshold (fewer but stronger points)
+BRISK_OCTAVES = 0    # 0 = Only scan original size (VERY FAST)
 MAX_FEATURES = 1000  
 
 def build_brisk_database(frames_dir):
-    # Octaves=0 yaparak piramit işlemini kapattık. Bu ORB kadar hızlandırır.
+    # Setting Octaves=0 turns off the pyramid processing. This makes it as fast as ORB.
     brisk = cv2.BRISK_create(thresh=BRISK_THRESH, octaves=BRISK_OCTAVES)
 
     descriptors_db = []
@@ -25,7 +25,7 @@ def build_brisk_database(frames_dir):
     with open(json_path) as f:
         frames_info = json.load(f)
 
-    print(f"HIZLI BRISK Veritabanı (Octaves={BRISK_OCTAVES}) oluşturuluyor...")
+    print(f"Building FAST BRISK Database (Octaves={BRISK_OCTAVES})...")
 
     count = 0
     for entry in frames_info:
@@ -35,12 +35,12 @@ def build_brisk_database(frames_dir):
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None: continue
 
-        # Özellik Çıkarımı
+        # Feature Extraction
         kp, des = brisk.detectAndCompute(img, None)
         
         if des is None or len(kp) == 0: continue
 
-        # En iyi 1000 özelliği seç
+        # Select the best 1000 features
         if len(kp) > MAX_FEATURES:
             kp_des_pair = sorted(zip(kp, des), key=lambda x: x[0].response, reverse=True)[:MAX_FEATURES]
             kp = [x[0] for x in kp_des_pair]
@@ -55,7 +55,7 @@ def build_brisk_database(frames_dir):
         headings_db.append(entry.get("heading", 0.0))
         
         count += 1
-        if count % 100 == 0: print(f"{count} kare işlendi...")
+        if count % 100 == 0: print(f"{count} frames processed...")
 
     output_path = os.path.join(frames_dir, "features_db_brisk_60_0.npz")
     
@@ -67,7 +67,7 @@ def build_brisk_database(frames_dir):
         gps_data=np.array(gps_data, dtype=object),
         headings=np.array(headings_db, dtype=np.float32)
     )
-    print(f"Kayıt Tamamlandı: {output_path}")
+    print(f"Save Completed: {output_path}")
 
 if __name__ == "__main__":
     real_frames_dir = os.path.expanduser(frames_path)

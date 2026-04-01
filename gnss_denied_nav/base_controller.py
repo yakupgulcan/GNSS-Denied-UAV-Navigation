@@ -162,12 +162,12 @@ class VelocityYawController(Node):
         self.last_command_time = time.time()
         
     def status_cb(self, msg):
-        # Dışarıdan "LANDING" mesajı gelirse iniş modunu başlat
+        # Start landing sequence if a "LANDING" status message is received
         if msg.data == "LANDING" and not self.is_landing_sequence:
-            self.get_logger().info("İniş Sekansı Başlatıldı...")
+            self.get_logger().info("Landing sequence initiated...")
             self.is_landing_sequence = True
 
-    # --- FRENLEME FONKSİYONU ---
+    # --- Braking ---
     def apply_braking_force(self, current_fwd_vel):
         if abs(current_fwd_vel) < self.STOP_THRESHOLD:
             return 1500
@@ -175,43 +175,40 @@ class VelocityYawController(Node):
         brake_pwm = 1500 + brake_force
         return max(1100, min(1900, brake_pwm))
 
-    # --- ANA KONTROL DÖNGÜSÜ ---
+    # --- Main Control Loop ---
     def control_loop(self):
         now = time.time()
         dt = now - self.last_loop_time
         self.last_loop_time = now
-        
-        if not self.mavros_state.connected: return
 
-        # --- 1. İNİŞ MANTIĞI (LANDING SEQUENCE) ---
-        # Eğer mod LAND ise veya biz iniş başlattıysak
+        if not self.mavros_state.connected:
+            return
+
+        # --- 1. Landing Sequence ---
         if self.mavros_state.mode == "LAND" or self.is_landing_sequence:
-            
-            self.is_landing_sequence = True # Bir kere girdiysek çıkmayalım
+            self.is_landing_sequence = True  # Once entered, stay in landing
             self.target_speed_body_x = 0.0
-
             self.set_mode("ALT_HOLD")
 
-        # --- 2. GÜVENLİK KONTROLÜ ---
-        # Eğer 2 saniyedir yeni komut yoksa ve inişte değilsek dur.
+        # --- 2. Safety timeout ---
+        # If no new command received for 2 seconds and not landing, stop.
         elif (time.time() - self.last_command_time) > 2.0:
             self.target_speed_body_x = 0.0
 
-        # --- 3. KOORDİNAT SİSTEMİ ---
-        # Body frame verisi direkt sensörden geliyor, çevirmeye gerek yok.
+        # --- 3. Coordinate system ---
+        # Body-frame velocity comes directly from the sensor; no conversion needed.
         current_body_forward = self.curent_vel_fwd
-        # DİKKAT: Genellikle sensörlerde +Y Sol'dur. ArduPilot Roll'da +PWM Sağa yatırır.
-        # Eğer sensör +Y Sol ise, drone sola gidiyordur. Düzeltmek için Sağa (+Roll) vermemiz lazım.
-        # Yani Error = 0 - Vel_Y formülü çalışmalı. 
-        # Ancak drone sağa yatmasına rağmen sola gidiyormuş gibi ölçüyorsa (ters montaj vb.) burayı kontrol et.
-        current_body_lateral = self.current_vel_left 
+        # NOTE: Sensors typically report +Y as Left. ArduPilot Roll: +PWM tilts Right.
+        # If sensor +Y is Left and drone drifts left, we must roll Right (+Roll PWM).
+        # Verify this if the drone moves opposite to the correction direction (e.g., reversed mount).
+        current_body_lateral = self.current_vel_left
 
-        # --- 4. PID HESAPLAMALARI ---
+        # --- 4. PID Calculations ---
 
-        # A) PITCH (İLERİ/GERİ)
+        # A) PITCH (Forward / Backward)
         rc_pitch = 1500
         if self.target_speed_body_x == 0.0 and abs(self.curent_vel_fwd) > 0.5:
-            # Hızlıyken dur emri geldiyse fren yap
+            # Stop command while moving: apply braking
             rc_pitch = self.apply_braking_force(current_body_forward)
             self.pid_vel_forward.integral = 0.0
         else:
@@ -220,31 +217,23 @@ class VelocityYawController(Node):
             out_forward = self.pid_vel_forward.update(error_forward)
             rc_pitch = 1500 - int(out_forward)
 
-        # B) ROLL (YANAL) - SIFIRLAMA MANTIĞI
-        # Hedef her zaman 0 (Yanal kayma istemiyoruz)
+        # B) ROLL (Lateral) — zeroing logic
+        # Target lateral speed is always 0 (no sideways drift)
         error_lateral = 0.0 - current_body_lateral
-        
-        # Deadzone: Çok küçük hatalar için tepki verme (Titremeyi önler)
+
+        # Deadzone: ignore very small errors to prevent oscillation
         if abs(error_lateral) < 0.1:
             out_lateral = 0
-            # İntegrali sıfırlamıyoruz ki rüzgar varsa tutmaya devam etsin
+            # Keep integral so wind disturbance is still corrected
         else:
             out_lateral = self.pid_vel_lateral.update(error_lateral)
-        
-        # Roll PWM: 1500 + Output
-        # Mantık: Hız Sol (+Y) ise -> Hata Negatif -> Output Negatif -> PWM < 1500 (Sola Yatır???) 
-        # DUR! Burada işaret hatası olabilir. ArduPilot Standartları:
-        # PWM < 1500: Sola Yatış
-        # PWM > 1500: Sağa Yatış
-        # Eğer Drone Sola (+Y) gidiyorsa, Sağa Yatmalı (PWM > 1500).
-        # Hata = 0 - (+Y) = -Y. PID Negatif çıktı verir.
-        # Eğer rc_roll = 1500 + out yaparsak PWM düşer ve Sola yatar. Yanlış!
-        # DOĞRUSU: rc_roll = 1500 - int(out_lateral) OLMALI (veya error tanımı değişmeli)
-        
-        # DÜZELTME: Error = Target - Current. Target=0. Error = -Current.
-        # Eğer Current=Pozitif (Sol) -> Error=Negatif -> PID Çıktı=Negatif.
-        # Biz Sağa (Pozitif PWM) istiyoruz. O zaman:
-        rc_roll = 1500 - int(out_lateral) 
+
+        # Roll PWM sign convention (ArduPilot):
+        # PWM < 1500: tilt Left  |  PWM > 1500: tilt Right
+        # If drone drifts Left (+Y), we need to tilt Right (PWM > 1500).
+        # Error = 0 - (+Y) = negative  →  PID output negative
+        # rc_roll = 1500 - out  →  1500 - (negative) = > 1500  →  tilt Right ✓
+        rc_roll = 1500 - int(out_lateral)
 
         # C) YAW
         error_yaw = self.target_yaw_deg - self.current_heading
@@ -253,16 +242,16 @@ class VelocityYawController(Node):
         out_yaw = self.pid_yaw.update(error_yaw)
         rc_yaw = 1500 + int(out_yaw)
 
-        # D) THROTTLE (YÜKSEKLİK)
+        # D) THROTTLE (Altitude hold)
         error_alt = self.TARGET_ALTITUDE - self.current_alt
         out_throttle = self.pid_alt.update(error_alt)
         rc_throttle = self.HOVER_PWM + int(out_throttle)
 
-        # --- 5. LİMİTLER VE GÖNDERİM ---
+        # --- 5. Clamp and Send ---
         rc_pitch = max(1300, min(1700, rc_pitch))
-        rc_roll  = max(1200, min(1800, rc_roll)) # Biraz daha geniş limit
-        rc_yaw   = max(1300, min(1700, rc_yaw))
-        rc_throttle = max(1250, min(1750, rc_throttle)) # Çok düşmesin, çok fırlamasın
+        rc_roll = max(1200, min(1800, rc_roll))  # Slightly wider limit for lateral correction
+        rc_yaw = max(1300, min(1700, rc_yaw))
+        rc_throttle = max(1250, min(1750, rc_throttle))
 
 
         if self.is_landing_sequence:

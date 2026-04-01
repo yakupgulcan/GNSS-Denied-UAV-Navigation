@@ -40,31 +40,14 @@ class ArduTakeoffNode(Node):
 
         # ---------- PARAMETERS ----------
         # 2950 M
-        #self.home_lat = -35.3766471     # <-- BAŞLANGIÇ GPS
+        #self.home_lat = -35.3766471     # <-- START GPS (alternative origin)
         #self.home_lon = 149.1652374
         self.flight_alt = 30.0
 
         # Demo
-        self.home_lat = -35.3658674     # <-- BAŞLANGIÇ GPS
+        self.home_lat = -35.3658674     # <-- START GPS
         self.home_lon = 149.1652376 
-        
-
-        """
-        # ENU WAYPOINTLER (metre) (OOriginal Map)
-        self.enu_points = [
-            (-40.0, 0.0),
-            (-40.0, 2950.0),
-            (-20.0, 2950.0),
-            (-20.0, 0.0),
-            (0.0, 0.0),
-            (0.0, 2950.0),
-            (20.0, 2950.0),
-            (20.0, 0.0),
-            (40.0, 0.0),
-            (40.0, 2950.0),
-            (0, 0),
-        ]
-        """ 
+        # ENU Waypoints (meters) (Original Map)
         self.enu_points = [
             (-40.0, 0.0),
             (-40.0, 600.0),

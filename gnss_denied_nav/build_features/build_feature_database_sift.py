@@ -3,18 +3,18 @@ import numpy as np
 import os
 import json
 
-# --- AYARLAR ---
+# --- SETTINGS ---
 frames_path = "~/frames_2026-01-17_17-22-56"
-N_FEATURES = 2000 # SIFT için  özellik iyi bir başlangıçtır
+N_FEATURES = 2000 # Good starting point for SIFT
 
 def build_sift_database(frames_dir):
     """
-    SIFT özellik veritabanını oluşturur.
-    Kaydedilenler: descriptors, keypoints, filenames, gps_data, headings
+    Builds the SIFT feature database.
+    Saved data: descriptors, keypoints, filenames, gps_data, headings
     """
 
-    # 1. SIFT Başlatıcı
-    # SIFT patent süresi dolduğu için modern OpenCV sürümlerinde (4.4+) doğrudan kullanılabilir.
+    # 1. Initialize SIFT
+    # Available natively in modern OpenCV (4.4+) since the patent expired.
     sift = cv2.SIFT_create(nfeatures=N_FEATURES)
 
     descriptors_db = []
@@ -26,13 +26,13 @@ def build_sift_database(frames_dir):
     json_path = os.path.join(frames_dir, "frames_details.json")
     
     if not os.path.exists(json_path):
-        print(f"HATA: JSON dosyası bulunamadı: {json_path}")
+        print(f"ERROR: JSON file not found: {json_path}")
         return
 
     with open(json_path) as f:
         frames_info = json.load(f)
 
-    print(f"SIFT ile veritabanı oluşturuluyor. Toplam {len(frames_info)} kare...")
+    print(f"Building database using SIFT. Total {len(frames_info)} frames...")
 
     count = 0
     for entry in frames_info:
@@ -41,20 +41,20 @@ def build_sift_database(frames_dir):
         if not os.path.exists(img_path):
             continue
 
-        # Görüntüyü Oku (Gri Tonlama)
+        # Read image (Grayscale)
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
 
-        # 2. SIFT Özellik Çıkarımı
+        # 2. SIFT Feature Extraction
         kp, des = sift.detectAndCompute(img, None)
         
-        # Özellik bulunamazsa atla
+        # Skip if no features found
         if des is None or len(kp) == 0:
             continue
 
-        # KeyPoint Serileştirme (x, y, size, angle)
-        # SIFT keypoint yapısı ORB ile uyumludur, aynı mantığı kullanabiliriz.
+        # Serialize KeyPoints (x, y, size, angle)
+        # SIFT keypoint structure is compatible with ORB, we can use the same logic.
         kp_simple = np.array([[k.pt[0], k.pt[1], k.size, k.angle] for k in kp], dtype=np.float32)
 
         descriptors_db.append(des)
@@ -66,9 +66,9 @@ def build_sift_database(frames_dir):
         
         count += 1
         if count % 50 == 0:
-            print(f"{count} kare işlendi...")
+            print(f"{count} frames processed...")
 
-    # .npz olarak kaydet
+    # Save as .npz
     output_path = os.path.join(frames_dir, f"features_db_sift_{N_FEATURES}.npz")
     
     np.savez_compressed(
@@ -81,9 +81,9 @@ def build_sift_database(frames_dir):
     )
 
     print("-" * 30)
-    print(f"İşlem tamamlandı.")
-    print(f"İşlenen Resim Sayısı: {len(filenames)}")
-    print(f"Kayıt Yeri: {output_path}")
+    print(f"Process completed.")
+    print(f"Images processed: {len(filenames)}")
+    print(f"Saved to: {output_path}")
 
 if __name__ == "__main__":
     real_frames_dir = os.path.expanduser(frames_path)

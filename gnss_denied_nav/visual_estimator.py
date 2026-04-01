@@ -180,17 +180,17 @@ class VisualEstimatorNode(Node):
 
     
     
-    # --- ANA İŞLEME DÖNGÜSÜ ---
+    # --- MAIN PROCESSING LOOP ---
     def process_visual_data(self, cv_image):
         now = time.time()
-        start_time = now  # İşlem başlangıcı
+        start_time = now  # Processing start time
         
-        # Varsayılan Değerler (Hata vermemesi için)
+        # Default values (to prevent errors)
         match_status = "NO_MATCH"
         est_x = 0.0
         est_y = 0.0
         
-        # 1. BREADCRUMB KAYDI
+        # 1. RECORD BREADCRUMB
         if self.state == "NORMAL":
             if (now - self.last_keyframe_time) > self.KEYFRAME_INTERVAL:
                 try:
@@ -209,9 +209,9 @@ class VisualEstimatorNode(Node):
                         self.breadcrumb_stack.append({'data': stored_data, 'hdg': self.current_heading})
                         self.last_keyframe_time = now
                 except Exception as e:
-                    self.get_logger().error(f"Breadcrumb hatası: {e}")
+                    self.get_logger().error(f"Breadcrumb error: {e}")
 
-        # 2. VERİTABANI EŞLEŞMESİ
+        # 2. DATABASE MATCHING
         db_match_pos = self.try_get_db_position(cv_image)
         
         if db_match_pos is not None:
@@ -224,13 +224,13 @@ class VisualEstimatorNode(Node):
                 self.current_y = match_y
                 self.is_localized = True
                 self.last_db_success_time = now
-                # İlk kilitlemede de MATCH olarak kaydedelim
+                # Record as MATCH_INIT on the very first lock
                 match_status = "MATCH_INIT"
                 est_x = match_x
                 est_y = match_y
             
             else:
-                # --- [B] NORMAL KONTROL ---
+                # --- [B] NORMAL TRACKING ---
                 elapsed_time = now - self.last_db_success_time
                 current_speed = math.sqrt(self.current_vel_x**2 + self.current_vel_y**2)
                 acceptable_diff = (current_speed * elapsed_time * 5.0) + 25.0 
@@ -242,7 +242,7 @@ class VisualEstimatorNode(Node):
                     self.current_x = self.SMOOTHING_ALPHA * match_x + (1 - self.SMOOTHING_ALPHA) * self.current_x
                     self.current_y = self.SMOOTHING_ALPHA * match_y + (1 - self.SMOOTHING_ALPHA) * self.current_y
                     
-                    # BAŞARILI EŞLEŞME
+                    # SUCCESSFUL MATCH
                     match_status = "MATCH"
                     est_x = self.current_x
                     est_y = self.current_y
@@ -255,17 +255,17 @@ class VisualEstimatorNode(Node):
                 else:
                     # OUTLIER
                     match_status = "OUTLIER"
-                    est_x = match_x # Outlier olsa bile ne bulduğunu loglayalım
+                    est_x = match_x # Log what was found even if it's an outlier
                     est_y = match_y
                     self.get_logger().warn(f"Outlier: {dist_error:.1f}m > {acceptable_diff:.1f}m")
 
-        # --- [C] EŞLEŞME YOK ---
+        # --- [C] NO MATCH ---
         else:
             time_since_last_match = now - self.last_db_success_time
             
             if self.state == "NORMAL":
                 if time_since_last_match > self.DB_TIMEOUT:
-                    self.get_logger().error(f"TIMEOUT! BACKTRACK BAŞLATILIYOR.")
+                    self.get_logger().error(f"TIMEOUT! INITIATING BACKTRACK.")
                     self.switch_to_backtrack_mode()
             
             elif self.state == "BRAKING":
@@ -279,13 +279,13 @@ class VisualEstimatorNode(Node):
             elif self.state == "BACKTRACKING":
                 self.process_backtrack_logic(cv_image)
         
-        # --- METRİK YAYINLAMA ---
+        # --- PUBLISH METRICS ---
         end_time = time.time()
         duration_ms = (end_time - start_time) * 1000.0
         
         metric_msg = String()
-        # Format: "ALGORITMA,STATUS,SURE(ms),EST_X,EST_Y"
-        # Not: est_x ve est_y 0.0 olabilir (NO_MATCH durumunda), analiz ederken status'a bakılmalı.
+        # Format: "ALGORITHM,STATUS,DURATION(ms),EST_X,EST_Y"
+        # Note: est_x/est_y could be 0.0 (NO_MATCH case), refer to status when analyzing
         metric_msg.data = f"{self.algorithm},{match_status},{duration_ms:.2f},{est_x:.2f},{est_y:.2f}"
         
         self.pub_metrics.publish(metric_msg)
@@ -324,14 +324,14 @@ class VisualEstimatorNode(Node):
         return (sx/sw, sy/sw)
 
     def process_backtrack_logic(self, cv_image):
-        # Yığın (Stack) boşalınca eve dönmüşüz demektir
+        # Once stack is empty, it means we have returned to origin (home)
         if not self.breadcrumb_stack:
-            self.get_logger().info("İz bitti. Backtrack tamamlandı.")
+            self.get_logger().info("Breadcrumbs exhausted. Backtrack complete.")
             self.switch_to_normal_mode()
             self.last_db_success_time = time.time()
             return
 
-        # Hedef: Yığının en üstündeki (en son eklenen) kare
+        # Target: The top frame in the stack (the most recently added one)
         target_entry = self.breadcrumb_stack[-1]
         target_data = target_entry['data']
         target_hdg = target_entry['hdg']
@@ -348,31 +348,31 @@ class VisualEstimatorNode(Node):
             now = time.time()
             dt = now - self.last_waypoint_switch_time
             
-            # --- YENİ MANTIK: DURMAK YOK, YOLA DEVAM ---
-            # Eğer mevcut görüntü hedef kare ile yeterince iyi eşleştiyse (>35)
-            # VE son waypoint değişiminden bu yana min süre geçtiyse:
+            # --- NEW LOGIC: NO STOPPING, KEEP GOING ---
+            # If current frame matches the target sufficiently well (>35)
+            # AND minimum time has elapsed since the last waypoint switch:
             if match_count > 35 and dt > self.MIN_TIME_PER_WAYPOINT:
-                self.get_logger().info(f"Waypoint geçildi (Skor: {match_count}). Sonrakine geçiliyor.")
+                self.get_logger().info(f"Waypoint passed (Score: {match_count}). Moving to next.")
                 
-                # Stack'ten mevcut hedefi çıkar (POP)
+                # Pop current target from stack
                 self.breadcrumb_stack.pop()
                 
-                # Zamanlayıcıyı sıfırla
+                # Reset timer
                 self.last_waypoint_switch_time = now
                 
-                # Not: Motor durdurmuyoruz (HOVER_WAIT yok).
-                # Bir sonraki döngüde otomatik olarak yeni hedefe (stack[-1]) göre hareket edecek.
-                # Şimdilik mevcut hareketi koru.
+                # Note: We don't stop the motors (no HOVER_WAIT).
+                # The next cycle will automatically steer via the new target (stack[-1]).
+                # For now, maintain current movement commands.
                 self.send_control(speed_cmd, target_yaw)
                 return 
             
-            # Eşleşme var ama henüz hedefe tam varmadık (veya süre dolmadı)
-            # Hedefe doğru gitmeye devam et
+            # Matched but we haven't quite reached the target yet (or min time hasn't passed)
+            # Continue heading toward target
             self.send_control(speed_cmd, target_yaw)
             
         else:
-            # Eşleşme koptuysa sadece heading'i koru, durma.
-            self.get_logger().warn("İz anlık kayıp, rota korunuyor...")
+            # If we momentarily lose lock on breadcrumbs, hold the heading and do not stop.
+            self.get_logger().warn("Track momentarily lost, maintaining course...")
             self.send_control(0.0, target_hdg)
 
     def publish_current_pose(self):
