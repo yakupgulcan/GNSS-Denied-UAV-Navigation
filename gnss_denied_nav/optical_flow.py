@@ -137,7 +137,7 @@ class VisualVelocityNode(Node):
 
     def image_callback(self, msg):
         # --- RATE LIMITER ---
-        # Kameradan 60 FPS gelse bile biz sadece ayarlanan sürede bir işlem yaparız.
+        # Even if camera sends 60 FPS, we only process at the configured rate interval.
         now = time.time()
         if (now - self.last_process_time) < self.process_interval:
             return

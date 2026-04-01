@@ -3,43 +3,41 @@ import numpy as np
 import os
 import json
 """
-Bu dosyada toplanan görüntüler ve görüntülerle ilgili json dosyası alınır
-ORB ile fwatureları çıkarılmış ve npz dosyasına kaydedilmiş şekilde tekrardan
-saklanır.
-
+Reads the collected images and their metadata json file,
+extracts ORB features, and saves them to an npz file.
 """
 frames_path = "~/frames_2026-01-09_08-47-17"
 
 def build_feature_database(frames_dir):
     """
-    ORB özellik veritabanını oluşturur.
-    Kaydedilenler: descriptors, keypoints, filenames, gps_data, headings
+    Builds the ORB feature database.
+    Saved data: descriptors, keypoints, filenames, gps_data, headings
     """
 
-    # 1. nfeatures 500 olarak ayarlandı (Daha hızlı, ancak daha az detay)
+    # 1. nfeatures set to 2000 (Faster but less dense detail)
     orb = cv2.ORB_create(nfeatures=2000)
 
     descriptors_db = []
     keypoints_db = []
     filenames = []
     gps_data = []
-    headings_db = [] # YENİ: Heading verisi için liste
+    headings_db = [] # Header list
 
     json_path = os.path.join(frames_dir, "frames_details.json")
     
     if not os.path.exists(json_path):
-        print(f"JSON dosyası bulunamadı: {json_path}")
+        print(f"JSON file not found: {json_path}")
         return
 
     with open(json_path) as f:
         frames_info = json.load(f)
 
-    print(f"Toplam {len(frames_info)} kare işleniyor...")
+    print(f"Processing total {len(frames_info)} frames...")
 
     for entry in frames_info:
         img_path = os.path.join(frames_dir, entry["filename"])
         
-        # Dosya var mı kontrolü
+        # Check if file exists
         if not os.path.exists(img_path):
             continue
 
@@ -47,27 +45,27 @@ def build_feature_database(frames_dir):
         if img is None:
             continue
 
-        # Özellik çıkarımı
+        # Feature extraction
         kp, des = orb.detectAndCompute(img, None)
         
-        # Eğer özellik bulunamazsa bu kareyi atla
+        # Skip this frame if no features found
         if des is None or len(kp) == 0:
             continue
 
-        # KeyPoint'leri serileştirilebilir formata çevir (x, y, size, angle)
+        # Serialize KeyPoints to a storable format (x, y, size, angle)
         kp_simple = np.array([[k.pt[0], k.pt[1], k.size, k.angle] for k in kp], dtype=np.float32)
 
         descriptors_db.append(des)
         keypoints_db.append(kp_simple)
         filenames.append(entry["filename"])
         
-        # GPS verisini al
+        # Get GPS data
         gps_data.append(entry.get("gps", {}))
         
-        # YENİ: Heading verisini al (Eğer yoksa 0.0 varsay)
+        # Get heading data (assume 0.0 if not present)
         headings_db.append(entry.get("heading", 0.0))
 
-    # .npz olarak kaydet
+    # Save as .npz
     output_path = os.path.join(frames_dir, "features_db_2000.npz")
     np.savez_compressed(
         output_path,
@@ -75,11 +73,11 @@ def build_feature_database(frames_dir):
         keypoints=np.array(keypoints_db, dtype=object),
         filenames=np.array(filenames, dtype=object),
         gps_data=np.array(gps_data, dtype=object),
-        headings=np.array(headings_db, dtype=np.float32) # YENİ: Heading dizisi
+        headings=np.array(headings_db, dtype=np.float32) 
     )
 
-    print(f"İşlem tamamlandı. {len(filenames)} görüntü için veritabanı oluşturuldu.")
-    print(f"Dosya: {output_path}")
+    print(f"Process completed. Database created for {len(filenames)} images.")
+    print(f"File: {output_path}")
 
 if __name__ == "__main__":
     frames_dir = os.path.expanduser(frames_path)
