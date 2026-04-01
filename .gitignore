@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+build/
+install/
+log/
+
+# VSCode/IDE files
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# ROS2 Python setup
+*.egg-info/
+dist/
+
+# model files
+models/**/*.glb
+models/**/*.dae
+models/**/*.obj
+
+# other files
+*.launch.pyc
+*.launch.xml
+*.bak
+*.tmp
