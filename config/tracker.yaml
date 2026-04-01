@@ -1,0 +1,13 @@
+tracker_node:
+  ros__parameters:
+    data_path: "/home/yakup/datasets/ebesinin_nesi"
+    algorithm: "orb"
+    max_features: 500
+    use_gpu: false
+
+
+tracker_node:
+  ros__parameters:
+    algorithm: "orb"
+    db_folder: "/home/yakup/datasets/frames"
+    use_gpu: false

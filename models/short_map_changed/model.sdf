@@ -1,0 +1,25 @@
+<?xml version='1.0'?>
+<sdf version="1.9">
+  <model name="short_map_changed">
+    <pose>0 0 0 0 0 0</pose>
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://short_map_changed/meshes/short_map_changed.glb</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://short_map_changed/meshes/short_map_changed_ground.glb</uri>
+            <scale>1 1 1</scale>
+          </mesh>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>

@@ -7,6 +7,9 @@ build/
 install/
 log/
 
+# Personal notes
+private/
+
 # VSCode/IDE files
 .vscode/
 .idea/

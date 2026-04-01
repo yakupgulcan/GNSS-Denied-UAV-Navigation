@@ -3,12 +3,21 @@
 <package format="3">
   <name>gnss_denied_nav</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="yakupgulcan5@gmail.com">yakup22</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Visual localization system for autonomous UAV navigation in GNSS-denied environments using feature matching algorithms (SIFT, ORB, BRISK, AKAZE, HOG).</description>
+  <maintainer email="yakupgulcan5@gmail.com">yakupgulcan</maintainer>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>mavros_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>gazebo_ros</depend>
+  <depend>ros_gz_bridge</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

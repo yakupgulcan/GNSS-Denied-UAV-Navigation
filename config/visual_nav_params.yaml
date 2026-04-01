@@ -1,0 +1,87 @@
+# =============================================================================
+# GNSS-Denied Navigation - Main Configuration
+# =============================================================================
+# All tunable parameters for the visual navigation system.
+# Override these values in launch files or via command line.
+
+# --- Visual Estimator Node ---
+visual_estimator_node:
+  ros__parameters:
+    # Algorithm: SIFT, ORB, BRISK, AKAZE, HOG
+    algorithm: "SIFT"
+    db_path: ""  # Path to feature database (.npz file)
+    
+    # GPS reference origin for ENU conversions
+    start_lat: -35.3658674
+    start_lon: 149.1652376
+    
+    # Smoothing factor for position updates (0.0 = no correction, 1.0 = full snap)
+    smoothing_alpha: 0.4
+    
+    # Database match timeout before triggering backtrack (seconds)
+    db_timeout: 12.0
+    
+    # Breadcrumb recording interval (seconds)
+    keyframe_interval: 1.0
+    
+    # Backtrack parameters
+    backtrack_speed: -1.5
+    backtrack_skip_count: 5
+    brake_duration: 2.0
+    min_time_per_waypoint: 0.2
+
+# --- Navigation Runner (Planner) ---
+visual_navigation_planner:
+  ros__parameters:
+    # Target position in local ENU frame (meters)
+    target_pos_x: 0.0
+    target_pos_y: 550.0
+    acceptance_radius: 30.0
+    
+    # GPS reference origin
+    start_lat: -35.3658674
+    start_lon: 149.1652376
+    
+    # Flight parameters
+    target_altitude: 30.0
+    max_speed: 3.0
+    
+    # Control gains
+    pos_p_gain: 0.5
+    turn_threshold: 30.0
+    lookahead_distance: 50.0
+    
+    # Altitude PID
+    kp_altitude: 17.0
+    hover_pwm: 1500
+    max_climb_pwm: 1750
+    max_descend_pwm: 1250
+    height_acceptance_error: 0.2
+
+# --- Base Controller (Velocity/Yaw PID) ---
+velocity_yaw_controller:
+  ros__parameters:
+    target_altitude: 30.0
+    hover_pwm: 1500
+    brake_gain: 120.0
+    stop_threshold: 0.2
+    
+    # Forward velocity PID
+    pid_forward_kp: 50.0
+    pid_forward_ki: 2.0
+    pid_forward_kd: 5.0
+    
+    # Lateral velocity PID
+    pid_lateral_kp: 150.0
+    pid_lateral_ki: 5.0
+    pid_lateral_kd: 10.0
+    
+    # Yaw PID
+    pid_yaw_kp: 20.0
+    pid_yaw_ki: 0.6
+    pid_yaw_kd: 0.5
+    
+    # Altitude PID
+    pid_alt_kp: 20.0
+    pid_alt_ki: 2.0
+    pid_alt_kd: 5.0
