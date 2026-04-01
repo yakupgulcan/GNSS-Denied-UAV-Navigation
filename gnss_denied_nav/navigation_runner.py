@@ -94,174 +94,122 @@ class VisualNavigationPlanner(Node):
         self.create_timer(0.1, self.planner_loop)  # 10 Hz
         self.get_logger().info("Planner started. Waiting for base controller...")
 
-    # --- CALLBACKS ---
+    # --- Callbacks ---
     def alt_cb(self, msg): self.current_altitude = msg.data
     def state_cb(self, msg): self.mavros_state = msg
     def hdg_cb(self, msg): self.current_heading = msg.data
-    # --- YÜKSEKLİK KONTROL ---
-    # --- CALLBACKLER ---
+
     def vel_cb(self, msg):
-        self.current_vel_enu["x"] = msg.twist.linear.x # East
-        self.current_vel_enu["y"] = msg.twist.linear.y # North
-        
+        self.current_vel_enu["x"] = msg.twist.linear.x  # East
+        self.current_vel_enu["y"] = msg.twist.linear.y  # North
+
     def visual_pose__enu_cb(self, msg):
-        
         self.current_pos["y"] = msg.pose.position.y
         self.current_pos["x"] = msg.pose.position.x
 
     def visual_pose_cb(self, msg):
-        if True:
+        """Unused: GPS-based position fallback (kept for reference)."""
+        if math.isnan(msg.latitude):
             return
-        if math.isnan(msg.latitude): return
-        # GPS -> Lokal Metre (ENU) Dönüşümü
+        # GPS -> local ENU (flat-earth approximation, sufficient for small areas)
         d_lat = msg.latitude - self.START_LAT
         d_lon = msg.longitude - self.START_LON
-        # Basit düz dünya yaklaşımı (Küçük alanlar için yeterli)
-        self.current_pos["y"] = d_lat * 111132.0 # Kuzey
-        self.current_pos["x"] = d_lon * (111132.0 * math.cos(math.radians(self.START_LAT))) # Doğu
+        self.current_pos["y"] = d_lat * 111132.0  # North
+        self.current_pos["x"] = d_lon * (111132.0 * math.cos(math.radians(self.START_LAT)))  # East
 
     def system_status_cb(self, msg):
         self.system_status = msg.data
 
-    # --- PLANLAMA DÖNGÜSÜ ---
+    # --- Main Planning Loop ---
     def planner_loop(self):
         if not self.mavros_state.connected:
             return
-        
+
         if self.system_status != "NORMAL":
-            self.get_logger().info("Normal ucus modunda değiliz müdahale etmeyeceğiz.")
+            self.get_logger().info("System not in NORMAL mode, planner paused.")
             return
-        
-        if self.mission_state == 0: # Takeoff
+
+        if self.mission_state == 0:  # Takeoff
             self.takeoff()
-            if self.takeoff_achieved: 
+            if self.takeoff_achieved:
                 self.mission_state = 2
                 if self.mavros_state.mode != "ALT_HOLD":
                     self.set_mode("ALT_HOLD")
                     self.send_rc(1500, 1500, self.HOVER_PWM, 1500)
-        
 
-        elif self.mission_state == 2: # NAVİGASYON (HEDEF BELİRLEME)
+        elif self.mission_state == 2:  # Navigate
             self.calculate_and_send_commands()
 
-        elif self.mission_state == 3: # İNİŞ
-            speed = math.sqrt(self.current_vel_enu['x']**2 + self.current_vel_enu['y']**2 )
-            if speed>1:
+        elif self.mission_state == 3:  # Land
+            speed = math.sqrt(self.current_vel_enu['x']**2 + self.current_vel_enu['y']**2)
+            if speed > 1:
                 for i in range(10):
-                    self.publish_commands(0,self.current_heading)
-                    self.get_logger().info("Hız sıfırlanıyor.")
+                    self.publish_commands(0, self.current_heading)
+                    self.get_logger().info("Zeroing speed before landing.")
                 return
             if self.mavros_state.mode != "LAND":
-                
                 self.set_mode("LAND")
-                # İnerken hız ve yaw komutlarını sıfırla ki base controller karışmasın
+                # Zero speed/yaw commands so base controller does not interfere during descent
                 self.publish_commands(0.0, self.current_heading)
             else:
                 if not self.mavros_state.armed:
                     self.mission_state = 4
-                    self.get_logger().info("Görev Tamamlandı.")
+                    self.get_logger().info("Mission complete.")
 
-    # --- NAVİGASYON MANTIĞI ---
+    # --- Navigation Logic ---
 
     def calculate_and_send_commands(self):
-
-        # 1. Final Hedefe Olan Gerçek Uzaklık (Durmak için lazım)
+        # 1. Distance to final target (used for stopping)
         real_dx = self.target_pos_x - self.current_pos["x"]
         real_dy = self.target_pos_y - self.current_pos["y"]
-        distance_to_final = math.sqrt(real_dx*real_dx + real_dy*real_dy)
+        distance_to_final = math.sqrt(real_dx * real_dx + real_dy * real_dy)
 
-        # 2. SANAL HEDEF (VIRTUAL TARGET) HESABI
-        # Buradaki varsayım: Rotamız (Start -> Target) düz bir çizgi.
-        # Bu çizgi üzerinde, mevcut konumumuzdan 'LOOKAHEAD_DIST' kadar ileride bir nokta seçiyoruz.
-        
-        # Basitleştirilmiş Vektör İzdüşümü (Line Following):
-        # Hedef hattımız Start(0,0) -> End(0, 2900) olduğu için ideal hat X=0 hattıdır.
-        # Bu yüzden Sanal Hedefin X'i her zaman target_pos_x (yani 0) olmalıdır.
-        
-        # Sanal Y konumu: Mevcut Y konumumuzun biraz ilerisi
+        # 2. Virtual target (lookahead point on the route line)
+        # Assumption: route is a straight line from Start to Target.
+        # We select a point LOOKAHEAD_DIST ahead on that line.
+        # Since the ideal path is X=0, the virtual target X equals target_pos_x.
         virtual_target_y = self.current_pos["y"] + self.LOOKAHEAD_DIST
-        virtual_target_x = self.target_pos_x 
+        virtual_target_x = self.target_pos_x
 
-        # Eğer final hedefe lookahead mesafesinden daha yakınsak, artık final hedefe kilitlen
+        # If closer to the final target than lookahead distance, lock onto final target
         if virtual_target_y > self.target_pos_y:
             virtual_target_y = self.target_pos_y
             virtual_target_x = self.target_pos_x
 
-        # 3. YAW HESABI (Sanal Hedefe Göre)
-        # Artık 3km öteye değil, 15m ötedeki (0, Y+15) noktasına bakıyoruz.
+        # 3. Yaw calculation (toward virtual target)
         dx_virt = virtual_target_x - self.current_pos["x"]
         dy_virt = virtual_target_y - self.current_pos["y"]
-        
-        # Bearing'i bu yakın noktaya göre hesapla
         bearing_rad = math.atan2(dx_virt, dy_virt)
         bearing_deg = math.degrees(bearing_rad)
-        if bearing_deg < 0: bearing_deg += 360.0
+        if bearing_deg < 0:
+            bearing_deg += 360.0
 
-        # 4. Açı Farkı Hesabı
+        # 4. Heading error
         heading_error = bearing_deg - self.current_heading
         if heading_error > 180: heading_error -= 360
         if heading_error < -180: heading_error += 360
 
-        # 5. Hız Hesabı (Final hedefe olan mesafeye göre)
+        # 5. Speed profile (P-control: slow down as we approach)
         desired_speed = distance_to_final * self.POS_P_GAIN
         desired_speed = min(desired_speed, self.MAX_SPEED)
 
-        # Dönüş manevrası kontrolü
+        # Stop and rotate if heading error exceeds threshold
         if abs(heading_error) > self.TURN_THRESHOLD:
-            desired_speed = 0.0 
+            desired_speed = 0.0
 
-        # 6. Varış Kontrolü
+        # 6. Arrival check
         if distance_to_final < self.acceptance_radius:
-            self.get_logger().info("HEDEFE VARILDI! İniş Moduna Geçiliyor.")
-            self.mission_state = 3 
+            self.get_logger().info("TARGET REACHED! Switching to landing.")
+            self.mission_state = 3
             desired_speed = 0.0
-        
-        # Loglama (Hata takibi için önemli)
-        # Cross Track Error (XTE) aslında current_pos["x"]'tir.
-        # self.get_logger().info(f"XTE: {self.current_pos['x']:.1f}m | Yaw Tgt: {bearing_deg:.1f}")
-        self.get_logger().info(f"Dist: {distance_to_final:.1f}m | Tgt Spd: {desired_speed:.1f} | Tgt Yaw: {bearing_deg:.1f}")
+
+        # Cross Track Error = current_pos["x"] (deviation from X=0 line)
+        self.get_logger().info(
+            f"Dist: {distance_to_final:.1f}m | Spd: {desired_speed:.1f} | Yaw: {bearing_deg:.1f}"
+        )
         self.publish_commands(desired_speed, bearing_deg)
 
-    """     
-    def calculate_and_send_commands(self):
-        # 1. Hedefe olan vektörü bul
-        dx = self.target_pos_x - self.current_pos["x"]
-        dy = self.target_pos_y - self.current_pos["y"]
-        distance = math.sqrt(dx*dx + dy*dy)
 
-        # 2. Hedef Açıyı Bul (Bearing)
-        bearing_rad = math.atan2(dx, dy) # (x, y) -> Atan2(Doğu, Kuzey) = Compass Bearing
-        bearing_deg = math.degrees(bearing_rad)
-        if bearing_deg < 0: bearing_deg += 360.0
-
-        # 3. Açı Farkını Hesapla (Dönüş Mantığı için)
-        heading_error = bearing_deg - self.current_heading
-        if heading_error > 180: heading_error -= 360
-        if heading_error < -180: heading_error += 360
-
-        # 4. Hız Profilini Hesapla
-        # Hedefe yaklaştıkça yavaşla (P kontrol mantığı)
-        desired_speed = distance * self.POS_P_GAIN
-        desired_speed = min(desired_speed, self.MAX_SPEED)
-
-        # 5. "Önce Dön Sonra Git" Mantığı
-        # Eğer hedef arkamızdaysa veya çok yandaysa hızı kes, sadece dön.
-        if abs(heading_error) > self.TURN_THRESHOLD:
-            # self.get_logger().info(f"Dönülüyor... Fark: {heading_error:.1f}")
-            desired_speed = 0.0 # Olduğun yerde dön
-
-        # 6. Hedeve Varış Kontrolü
-        if distance < self.acceptance_radius:
-            self.get_logger().info("HEDEFE VARILDI! İniş Moduna Geçiliyor.")
-            self.mission_state = 3 # Land state
-            desired_speed = 0.0
-        
-        # 7. Emirleri Yayınla (Base Controller Dinliyor)
-        # Loglama
-        # self.get_logger().info(f"Dist: {distance:.1f}m | Tgt Spd: {desired_speed:.1f} | Tgt Yaw: {bearing_deg:.1f}")
-        
-        self.publish_commands(desired_speed, bearing_deg)
-"""
     def publish_commands(self, speed, yaw):
         msg_spd = Float64()
         msg_spd.data = float(speed)
@@ -272,8 +220,7 @@ class VisualNavigationPlanner(Node):
         self.pub_target_speed.publish(msg_spd)
         self.pub_target_yaw.publish(msg_yaw)
 
-    # --- YARDIMCI FONKSİYONLAR ---
-    # ... Takeoff, SetMode, ArmVehicle fonksiyonları aynı ...
+    # --- Helper Functions ---
     def send_rc(self, roll, pitch, throttle, yaw):
         msg = OverrideRCIn()
         msg.channels = [65535] * 18
@@ -310,14 +257,12 @@ class VisualNavigationPlanner(Node):
         return int(max(self.MAX_DESCEND_PWM, min(self.MAX_CLIMB_PWM, target_pwm)))
     
     def handle_takeoff_request(self):
-        # Bu fonksiyon sadece dronu hazırlar.
-        # Yüksekliği "Base Controller"daki PID_ALT halledecektir.
-        # Bizim yapmamız gereken "ALT_HOLD"a alıp "ARM" etmek.
-        
+        """Unused: alternative takeoff using ALT_HOLD (kept for reference)."""
+        # Altitude is managed by PID_ALT in base_controller; we only need to ARM in ALT_HOLD.
         if self.mavros_state.mode != "ALT_HOLD":
             self.set_mode("ALT_HOLD")
-            time.sleep(0.5) # Mod değişimine zaman tanı
-        
+            time.sleep(0.5)  # Allow time for mode change
+
         if not self.mavros_state.armed and self.mavros_state.mode == "ALT_HOLD":
             self.get_logger().info("Arming...")
             self.client_arm.call_async(CommandBool.Request(value=True))
@@ -333,7 +278,7 @@ def main():
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        # Kapanırken dur emri gönder
+        # Send stop command on shutdown
         node.publish_commands(0.0, node.current_heading)
     finally:
         node.destroy_node()

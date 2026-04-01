@@ -1,7 +1,7 @@
 tracker_node:
   ros__parameters:
-    db_path : "frames_2026-01-05_01-06-36"
-    home_lat: "/home/yakup/datasets/ebesinin_nesi"
-    home_lon: "orb"
+    db_path : ""
+    home_lat: ""
+    home_lon: ""
     target_x :
     target_y :

@@ -13,66 +13,66 @@ class BenchmarkLogger(Node):
     def __init__(self):
         super().__init__('benchmark_logger')
         
-        # --- AYARLAR ---
+        # --- Settings ---
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.filename = f'benchmark_data_{timestamp}.csv'
         self.file_path = os.path.join(os.getcwd(), self.filename)
-        
-        # CSV Dosyası Başlatma
+
+        # Initialize CSV file
         self.csv_file = open(self.file_path, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
-        # Sütunlar: Zaman, Gerçek X, Gerçek Y, Tahmin X, Tahmin Y
+        # Columns: timestamp, ground-truth X/Y, estimated X/Y
         self.csv_writer.writerow(['timestamp', 'true_x', 'true_y', 'est_x', 'est_y'])
-        
-        self.get_logger().info(f"Kayıt başladı: {self.filename}")
-        self.get_logger().info("Topic bekleniyor: /odometry ve /visual_pose_enu")
 
-        # --- DURUM DEĞİŞKENLERİ ---
+        self.get_logger().info(f"Logging started: {self.filename}")
+        self.get_logger().info("Waiting for topics: /odometry and /visual_pose_enu")
+
+        # --- State variables ---
         self.start_offset_x = 0.0
         self.start_offset_y = 0.0
-        self.is_initialized = False # İlk odom verisi alındı mı?
-        
+        self.is_initialized = False  # True once the first odometry message is received
+
         self.true_x = 0.0
         self.true_y = 0.0
         self.est_x = 0.0
         self.est_y = 0.0
 
-        # --- ABONELİKLER ---
+        # --- Subscriptions ---
         qos_profile = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
 
-        # 1. Gerçek Konum (Gazebo Doğrudan Odometry)
-        # Topic adı: /odometry
+        # 1. Ground-truth position (Gazebo odometry)
         self.create_subscription(Odometry, '/odometry', self.odom_cb, qos_profile)
-        
-        # 2. Tahmin Edilen Konum (Bizim Algoritma)
+
+        # 2. Estimated position (visual localization algorithm)
         self.create_subscription(PoseStamped, '/visual_pose_enu', self.visual_cb, 10)
 
-        # --- KAYIT ZAMANLAYICISI (10 Hz) ---
+        # --- Logging timer (10 Hz) ---
         self.timer = self.create_timer(0.1, self.log_data)
 
     def odom_cb(self, msg):
-        # Odometry mesajından pozisyonu al
+        # Extract position from odometry message
         raw_x = msg.pose.pose.position.x
         raw_y = msg.pose.pose.position.y
 
-        # İlk gelen veriyi "Sıfır Noktası" (Offset) olarak kaydet
+        # On first message, record the origin offset to normalize to (0, 0)
         if not self.is_initialized:
             self.start_offset_x = raw_x
             self.start_offset_y = raw_y
             self.is_initialized = True
-            self.get_logger().info(f"Referans Noktası Alındı (Gazebo): X={raw_x:.2f}, Y={raw_y:.2f}")
+            self.get_logger().info(
+                f"Origin set (Gazebo): X={raw_x:.2f}, Y={raw_y:.2f}")
 
-        # Başlangıç farkını çıkararak (0,0)'a oturt
+        # Apply offset so trajectory starts at (0, 0)
         self.true_x = raw_x - self.start_offset_x
         self.true_y = raw_y - self.start_offset_y
 
     def visual_cb(self, msg):
-        # Visual Positioning zaten (0,0)'dan başladığı için direkt alıyoruz
+        # Visual estimate already starts at (0, 0), take it directly
         self.est_x = msg.pose.position.x
         self.est_y = msg.pose.position.y
 
     def log_data(self):
-        # Başlangıç verisi gelmeden kaydetme
+        # Do not log until the origin has been established
         if not self.is_initialized:
             return
 
