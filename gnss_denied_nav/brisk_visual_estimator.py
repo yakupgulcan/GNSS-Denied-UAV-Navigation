@@ -21,7 +21,7 @@ from datetime import datetime
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-# --- IMPORTLAR ---
+# --- IMPORTS ---
 from gnss_denied_nav.brisk_detect_match import BRISKDetectAndMatch
 
 MATCH_ALGO = 5
@@ -42,15 +42,15 @@ class VisualLocalizationNode(Node):
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'state'])
         
-        # Parametreler
+        # Parameters
         self.declare_parameter('db_path', DB_PATH)
         actual_db_path = self.get_parameter('db_path').get_parameter_value().string_value
         
-        self.get_logger().info('BRISK Veritabanı yükleniyor...')
+        self.get_logger().info('BRISK Loading Database...')
         self.localizer = BRISKDetectAndMatch(actual_db_path, thresh=30)
-        self.get_logger().info('BRISK Veritabanı yüklendi.')
+        self.get_logger().info('BRISK Database loaded.')
 
-        # --- DURUM DEĞİŞKENLERİ ---
+        # --- STATE VARIABLES ---
         self.state = "NORMAL"
         self.mavros_state = State()
         self.is_localized = False
@@ -79,10 +79,10 @@ class VisualLocalizationNode(Node):
         self.BRAKE_DURATION = 2.0 
         self.BACKTRACK_SKIP_COUNT = 5 
 
-        # --- YAYINCILAR & ABONELİKLER ---
-        # HIZ İÇİN KRİTİK AYAR: 
-        # depth=1 -> Sadece en son gelen 1 mesajı tut.
-        # BEST_EFFORT -> Kayıp olursa önemseme, hızı koru.
+        # --- PUBLISHERS & SUBSCRIPTIONS ---
+        # CRITICAL SPEED SETTING: 
+        # Translated internal comment
+        # Translated internal comment
         qos_sensor = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT, 
             history=HistoryPolicy.KEEP_LAST, 
@@ -106,7 +106,7 @@ class VisualLocalizationNode(Node):
         self.SMOOTHING_ALPHA = 0.3
         self.current_altitude = 0.0
         
-        # FPS Kontrolü için
+        # Translated internal comment
         self.last_process_time = 0
 
     def alt_cb(self, msg): self.current_altitude = msg.data
@@ -125,15 +125,15 @@ class VisualLocalizationNode(Node):
         self.current_y += msg.twist.linear.y * dt
         self.publish_current_pose() 
 
-    # --- GÖRÜNTÜ CALLBACK ---
+    # --- IMAGE CALLBACK ---
     def image_callback(self, msg):
-        # Manuel gecikme kontrolünü (lag check) kaldırdık çünkü saatler uyuşmuyor.
-        # Bunun yerine QoS (depth=1) ve basit bir FPS kilidi kullanacağız.
+        # Translated internal comment
+        # Translated internal comment
         
         now = time.time()
         
-        # İşlemciyi boğmamak için Max 10 FPS sınırı koyabiliriz (Opsiyonel)
-        # Eğer çok hızlı geliyorsa aradakileri atla.
+        # Translated internal comment
+        # Translated internal comment
         if (now - self.last_process_time) < 0.1: # 0.1s = 10 FPS
              return
         self.last_process_time = now
@@ -165,7 +165,7 @@ class VisualLocalizationNode(Node):
 
                 # --- INIT ---
                 if not self.is_localized:
-                    self.get_logger().warn(f"İLK KİLİTLEME: X={match_x:.1f}, Y={match_y:.1f}")
+                    self.get_logger().warn(f"ILK KILITLEME: X={match_x:.1f}, Y={match_y:.1f}")
                     self.current_x = match_x
                     self.current_y = match_y
                     self.is_localized = True
@@ -185,7 +185,7 @@ class VisualLocalizationNode(Node):
                     self.current_y = self.SMOOTHING_ALPHA * match_y + (1 - self.SMOOTHING_ALPHA) * self.current_y
                     
                     if self.state in ["BACKTRACKING", "BRAKING", "HOVER_WAIT"]:
-                        self.get_logger().info("BRISK EŞLEŞTİ! NORMAL MOD.")
+                        self.get_logger().info("BRISK ESLESTI! NORMAL MOD.")
                         self.switch_to_normal_mode()
 
                     self.log_to_csv("DB_MATCH", self.current_x, self.current_y)
@@ -198,7 +198,7 @@ class VisualLocalizationNode(Node):
                 
                 if self.state == "NORMAL":
                     if time_since_last_match > self.DB_TIMEOUT:
-                        self.get_logger().error(f"VERİ YOK! BACKTRACK.")
+                        self.get_logger().error(f"VERI YOK! BACKTRACK.")
                         self.switch_to_backtrack_mode()
                 
                 elif self.state == "BRAKING":
@@ -221,7 +221,7 @@ class VisualLocalizationNode(Node):
             self.pub_status.publish(String(data=self.state))
 
         except Exception as e:
-            self.get_logger().error(f'Hata: {str(e)}')
+            self.get_logger().error(f'Error: {str(e)}')
 
     # --- YARDIMCI METOTLAR ---
     def switch_to_backtrack_mode(self):

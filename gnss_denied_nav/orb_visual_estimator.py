@@ -21,7 +21,7 @@ from datetime import datetime
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-# --- IMPORTLAR ---
+# --- IMPORTS ---
 from gnss_denied_nav.orb_detect_match import ORBDetectAndMatch
 
 MATCH_ALGO = 0 
@@ -42,15 +42,15 @@ class VisualLocalizationNode(Node):
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'state'])
         
-        # Parametreler
+        # Parameters
         self.declare_parameter('db_path', DB_PATH)
         actual_db_path = self.get_parameter('db_path').get_parameter_value().string_value
         
-        self.get_logger().info('Veritabanı yükleniyor...')
+        self.get_logger().info('Loading Database...')
         self.localizer = ORBDetectAndMatch(actual_db_path, n_features=1000)
-        self.get_logger().info('Veritabanı yüklendi.')
+        self.get_logger().info('Database loaded.')
 
-        # --- DURUM DEĞİŞKENLERİ ---
+        # --- STATE VARIABLES ---
         self.state = "NORMAL" # NORMAL, BRAKING, BACKTRACKING, HOVER_WAIT
         self.mavros_state = State()
         
@@ -61,29 +61,29 @@ class VisualLocalizationNode(Node):
         self.current_heading = 0.0
         self.last_vel_time = time.time()
         
-        # --- BREADCRUMB AYARLARI ---
+        # --- BREADCRUMB SETTINGS ---
         self.last_db_success_time = time.time() 
         self.DB_TIMEOUT = 12.0 
         
         self.KEYFRAME_INTERVAL = 1.0 
         self.last_keyframe_time = 0
-        self.breadcrumb_stack = deque(maxlen=2000) # Tüm uçuşu sakla
+        self.breadcrumb_stack = deque(maxlen=2000) # Store entire flight
         
-        # Backtrack Mantığı
+        # Backtrack Logic
         self.MIN_TIME_PER_WAYPOINT = 0.1 
         self.last_waypoint_switch_time = 0.0
         self.BACKTRACK_SPEED = -1.0
         
         # Stop-and-Wait
         self.hover_start_time = 0.0
-        self.HOVER_DURATION = 3.0 # Waypoint'e varınca 3 sn bekle
+        self.HOVER_DURATION = 3.0 # Wait 3 sec upon reaching waypoint
         
         # Momentum
         self.brake_start_time = 0.0
         self.BRAKE_DURATION = 2.0 
         self.BACKTRACK_SKIP_COUNT = 5 
 
-        # --- YAYINCILAR & ABONELİKLER ---
+        # --- PUBLISHERS & SUBSCRIPTIONS ---
         qos_sensor = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         
         self.pose_pub = self.create_publisher(PoseStamped, '/visual_pose_enu', 10)
@@ -93,7 +93,7 @@ class VisualLocalizationNode(Node):
         self.pub_speed = self.create_publisher(Float64, '/control/target_speed', 10)
         self.pub_yaw = self.create_publisher(Float64, '/control/target_yaw', 10)
 
-        # Paralel Abonelikler
+        # Parallel Subscriptions
         self.subscription = self.create_subscription(Image, '/camera/image', self.image_callback, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
         self.vel_sub = self.create_subscription(TwistStamped, '/visual_velocity_enu', self.velocity_callback, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
         self.hdg_sub = self.create_subscription(Float64, '/mavros/global_position/compass_hdg', self.hdg_cb, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
@@ -105,9 +105,9 @@ class VisualLocalizationNode(Node):
     def hdg_cb(self, msg): self.current_heading = msg.data
     def state_cb(self, msg): self.mavros_state = msg
 
-    # --- HIZ CALLBACK ---
+    # --- VELOCITY CALLBACK ---
     def velocity_callback(self, msg):
-        # LAND modundaysak tahmin yapmayı bırak (Drift olmasın)
+        # If in LAND mode, stop estimation (to avoid drift)
         if self.mavros_state.mode == "LAND": return
 
         now = time.time()
@@ -122,81 +122,81 @@ class VisualLocalizationNode(Node):
         self.current_y += msg.twist.linear.y * dt
         self.publish_current_pose() 
 
-    # --- GÖRÜNTÜ CALLBACK ---
+    # --- IMAGE CALLBACK ---
     def image_callback(self, msg):
-        # İnişteysek işlem yapma
+        # Do not process if landing
         #if self.mavros_state.mode == "LAND" or self.is_landing or  self.mavros_state.mode != "ALT_HOLD": 
         if self.mavros_state.mode == "LAND": 
             if self.mavros_state.mode == "LAND" or self.is_landing:
                 self.is_landing = True
             return
-        self.get_logger().info("Eslesme deneniyor.")
+        self.get_logger().info("Trying match.")
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
             now = time.time()
             
-            # --- HER ZAMAN KAYIT AL (DAİMİ BREADCRUMB) ---
-            # DB eşleşmesi olsa da olmasa da, ilerledikçe iz bırakıyoruz.
-            # Ancak Backtrack modundayken kendi izimizi kaydetmemeliyiz (Loop oluşur).
+            # --- ALWAYS RECORD (CONTINUOUS BREADCRUMBS) ---
+            # Leave breadcrumbs as we proceed, regardless of DB match.
+            # Do not record breadcrumbs while backtracking (prevents loops).
             if self.state == "NORMAL":
                 if (now - self.last_keyframe_time) > self.KEYFRAME_INTERVAL:
                     kp, des = self.localizer.orb.detectAndCompute(cv_image, None)
                     if des is not None:
-                        # Stack'e ekle
+                        # Add to Stack
                         self.breadcrumb_stack.append({'des': des, 'hdg': self.current_heading})
                         self.last_keyframe_time = now
-                        # Stack çok büyürse baştan sil (FIFO değil, LIFO kullanacağız ama boyutu korumak lazım)
-                        # deque maxlen bunu otomatik yapar.
+                        # Pop from start if stack gets too big.
+                        # deque maxlen handles this automatically.
 
-            # --- 1. DB EŞLEŞMESİ ARA ---
+            # --- 1. SEARCH DB MATCH ---
             db_match_pos = self.try_get_db_position(cv_image)
             
             if db_match_pos is not None:
-                # --- [A] SAĞLAM ROTA BULUNDU ---
+                # --- [A] SOLID ROUTE FOUND ---
                 match_x, match_y = db_match_pos
                 
-                # Outlier Kontrolü
+                # Outlier Check
                 elapsed_time = now - self.last_db_success_time
                 current_speed = math.sqrt(self.current_vel_x**2 + self.current_vel_y**2)
                 acceptable_diff = (current_speed * elapsed_time * 5.0) + 15.0 
                 dist_error = math.sqrt((match_x - self.current_x)**2 + (match_y - self.current_y)**2)
                 
                 if dist_error < acceptable_diff:
-                    # GEÇERLİ MATCH -> RESETLE
+                    # VALID MATCH -> RESETLE
                     self.last_db_success_time = now
                     self.current_x = self.SMOOTHING_ALPHA * match_x + (1 - self.SMOOTHING_ALPHA) * self.current_x
                     self.current_y = self.SMOOTHING_ALPHA * match_y + (1 - self.SMOOTHING_ALPHA) * self.current_y
                     
-                    # Eğer Backtrack veya Bekleme modundaysak -> NORMALE DÖN
+                    # If in Backtrack or Wait mode -> RETURN TO NORMAL
                     if self.state in ["BACKTRACKING", "BRAKING", "HOVER_WAIT"]:
-                        self.get_logger().info("DB EŞLEŞMESİ GELDİ! NORMAL MODA DÖNÜLÜYOR.")
+                        self.get_logger().info("DB MATCH ACQUIRED! RETURNING TO NORMAL MODE.")
                         self.switch_to_normal_mode()
                         
-                        # Stack'i silmek yerine, bulunduğumuz yere kadar olan kısmı budayabiliriz.
-                        # Ama güvenli olanı: Eğer DB bulduysak, artık o noktadan sonrasını tekrar kaydedebiliriz.
-                        # İsteğe bağlı: self.breadcrumb_stack.clear() (Eski rotayı unutmak istersen)
-                        # Şimdilik tutuyoruz, belki ilerde yine lazım olur.
+                        # Instead of clearing stack, we could prune to current location.
+                        # But safer to keep recording from DB lock onwards.
+                        # Optional: clear stack to forget old route.
+                        # Keeping it for now.
 
                     self.log_to_csv("DB_MATCH", self.current_x, self.current_y)
                 else:
-                    self.get_logger().warn(f"Outlier Match Reddedildi: Fark {dist_error:.1f}m")
+                    self.get_logger().warn(f"Outlier Match Rejected: Diff {dist_error:.1f}m")
 
-            # --- [B] DB EŞLEŞMESİ YOK ---
+            # --- [B] NO DB MATCH ---
             else:
                 time_since_last_match = now - self.last_db_success_time
                 
                 if self.state == "NORMAL":
-                    # 10 saniye limitini aştı mı?
+                    # Exceeded 10 second limit?
                     if time_since_last_match > self.DB_TIMEOUT:
-                        self.get_logger().error(f"{self.DB_TIMEOUT} sn veri yok! BACKTRACK BAŞLATILIYOR.")
+                        self.get_logger().error(f"{self.DB_TIMEOUT} sec no data! INITIATING BACKTRACK.")
                         self.switch_to_backtrack_mode()
                 
                 elif self.state == "BRAKING":
                     self.send_control(0.0, self.current_heading)
                     if (now - self.brake_start_time) > self.BRAKE_DURATION:
-                        self.get_logger().info("Fren bitti. Geri dönüş başlıyor.")
+                        self.get_logger().info("Braking complete. Returning.")
                         self.state = "BACKTRACKING"
-                        # Son birkaç kareyi atla
+                        # Skip last few frames
                         for _ in range(min(self.BACKTRACK_SKIP_COUNT, len(self.breadcrumb_stack))):
                             self.breadcrumb_stack.pop()
                         self.last_waypoint_switch_time = now
@@ -205,31 +205,31 @@ class VisualLocalizationNode(Node):
                     self.process_backtrack_logic(cv_image)
                 
                 elif self.state == "HOVER_WAIT":
-                    # Bekleme Süresi Kontrolü
-                    self.send_control(0.0, self.current_heading) # Dur ve Bekle
+                    # Wait Time Check
+                    self.send_control(0.0, self.current_heading) # Stop and Wait
                     if (now - self.hover_start_time) > self.HOVER_DURATION:
-                        self.get_logger().info("Bekleme süresi doldu. DB gelmedi. Geriye devam...")
+                        self.get_logger().info("Wait time over. No DB. Continuing back...")
                         self.state = "BACKTRACKING"
-                        # O anki waypoint'i tüketip devam et
+                        # Consume current waypoint and continue
                         if self.breadcrumb_stack: self.breadcrumb_stack.pop()
             
             self.pub_status.publish(String(data=self.state))
 
         except Exception as e:
-            self.get_logger().error(f'Hata: {str(e)}')
+            self.get_logger().error(f'Error: {str(e)}')
 
-    # --- MOD GEÇİŞLERİ ---
+    # --- MODE TRANSITIONS ---
     def switch_to_backtrack_mode(self):
         self.state = "BRAKING"
         self.brake_start_time = time.time()
-        self.pub_override.publish(Bool(data=True)) # Planner Sus
+        self.pub_override.publish(Bool(data=True)) # Quiet Planner
         
     def switch_to_normal_mode(self):
         self.state = "NORMAL"
         self.send_control(0.0, self.current_heading)
-        self.pub_override.publish(Bool(data=False)) # Planner Konuş
+        self.pub_override.publish(Bool(data=False)) # Speak Planner
 
-    # --- DB MATCHING (AYNI) ---
+    # --- DB MATCHING (SAME) ---
     def try_get_db_position(self, cv_image):
         candidates = self.localizer.get_location(cv_image, min_match_count=8, top_k=5)
         if not candidates: return None
@@ -252,11 +252,11 @@ class VisualLocalizationNode(Node):
         if sw == 0: return None
         return (sx/sw, sy/sw)
 
-    # --- BACKTRACK MANTIĞI (GÜNCELLENDİ) ---
+    # --- BACKTRACK LOGIC (UPDATED) ---
     def process_backtrack_logic(self, cv_image):
         
         if not self.breadcrumb_stack:
-            self.get_logger().info("İz bitti. Bekliyoruz...")
+            self.get_logger().info("Breadcrumbs exhausted. Waiting...")
             self.switch_to_normal_mode()
             self.last_db_success_time = time.time()
             return
@@ -278,20 +278,20 @@ class VisualLocalizationNode(Node):
             now = time.time()
             dt = now - self.last_waypoint_switch_time
             
-            # --- DUR VE BEKLE MANTIĞI ---
+            # --- STOP AND WAIT LOGIC ---
             if match_count > 35 and dt > self.MIN_TIME_PER_WAYPOINT:
-                self.get_logger().info(f"Waypoint'e varıldı (Skor: {match_count}). Durup DB bekleniyor...")
+                self.get_logger().info(f"Reached Waypoint (Score: {match_count}). Stopping to wait for DB...")
                 self.state = "HOVER_WAIT"
                 self.hover_start_time = now
-                self.send_control(0.0, self.current_heading) # Dur
-                return # Döngüden çık, bir sonraki tur HOVER_WAIT'e girecek
+                self.send_control(0.0, self.current_heading) # Stop
+                return # Exit loop, next cycle enters HOVER_WAIT
             
             self.send_control(speed_cmd, target_yaw)
         else:
-            self.get_logger().warn("İz Kaybedildi! Referans açıya dönülüyor...")
+            self.get_logger().warn("Track Lost! Returning to reference heading...")
             self.send_control(0.0, target_hdg)
 
-    # ... (Diğer yardımcı fonksiyonlar aynı) ...
+    # ... (Other helper functions the same) ...
     def publish_current_pose(self):
         pose_msg = PoseStamped()
         pose_msg.header.stamp = self.get_clock().now().to_msg()

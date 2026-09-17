@@ -21,12 +21,12 @@ from datetime import datetime
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-# --- IMPORTLAR (SIFT KULLANIYORUZ) ---
+# --- IMPORTS (SIFT KULLANIYORUZ) ---
 # sift_detect_match.py must be in gnss_denied_nav package
 from gnss_denied_nav.sift_detect_match import SIFTDetectAndMatch
 
 MATCH_ALGO = 2 # 0=ORB, 1=HOG, 2=SIFT
-# SIFT Veritabanı Yolu (build_sift_database.py ile oluşturulmuş olmalı)
+# SIFT Database Path (must be generated with build_sift_database.py)
 DB_PATH = ""
 START_LAT = -35.3658674
 START_LON = 149.1652376
@@ -44,16 +44,16 @@ class VisualLocalizationNode(Node):
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'state'])
         
-        # Parametreler
+        # Parameters
         self.declare_parameter('db_path', DB_PATH)
         actual_db_path = self.get_parameter('db_path').get_parameter_value().string_value
         
-        self.get_logger().info('SIFT Veritabanı yükleniyor...')
-        # SIFT Sınıfını Başlat
+        self.get_logger().info('SIFT Loading Database...')
+        # Initialize SIFT Class
         self.localizer = SIFTDetectAndMatch(actual_db_path, n_features=1000)
-        self.get_logger().info('SIFT Veritabanı yüklendi.')
+        self.get_logger().info('SIFT Database loaded.')
 
-        # --- DURUM DEĞİŞKENLERİ ---
+        # --- STATE VARIABLES ---
         self.state = "NORMAL" # NORMAL, BRAKING, BACKTRACKING, HOVER_WAIT
         self.mavros_state = State()
         
@@ -64,29 +64,29 @@ class VisualLocalizationNode(Node):
         self.current_heading = 0.0
         self.last_vel_time = time.time()
         
-        # --- BREADCRUMB AYARLARI ---
+        # --- BREADCRUMB SETTINGS ---
         self.last_db_success_time = time.time() 
         self.DB_TIMEOUT = 15.0 
         
         self.KEYFRAME_INTERVAL = 1.0 
         self.last_keyframe_time = 0
-        self.breadcrumb_stack = deque(maxlen=2000) # Tüm uçuşu sakla
+        self.breadcrumb_stack = deque(maxlen=2000) # Store entire flight
         
-        # Backtrack Mantığı
+        # Backtrack Logic
         self.MIN_TIME_PER_WAYPOINT = 0.1 
         self.last_waypoint_switch_time = 0.0
         self.BACKTRACK_SPEED = -1.0
         
         # Stop-and-Wait
         self.hover_start_time = 0.0
-        self.HOVER_DURATION = 3.0 # Waypoint'e varınca 3 sn bekle
+        self.HOVER_DURATION = 3.0 # Wait 3 sec upon reaching waypoint
         
         # Momentum
         self.brake_start_time = 0.0
         self.BRAKE_DURATION = 2.0 
         self.BACKTRACK_SKIP_COUNT = 5 
 
-        # --- YAYINCILAR & ABONELİKLER ---
+        # --- PUBLISHERS & SUBSCRIPTIONS ---
         qos_sensor = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         
         self.pose_pub = self.create_publisher(PoseStamped, '/visual_pose_enu', 10)
@@ -96,7 +96,7 @@ class VisualLocalizationNode(Node):
         self.pub_speed = self.create_publisher(Float64, '/control/target_speed', 10)
         self.pub_yaw = self.create_publisher(Float64, '/control/target_yaw', 10)
 
-        # Paralel Abonelikler
+        # Parallel Subscriptions
         self.subscription = self.create_subscription(Image, '/camera/image', self.image_callback, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
         self.vel_sub = self.create_subscription(TwistStamped, '/visual_velocity_enu', self.velocity_callback, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
         self.hdg_sub = self.create_subscription(Float64, '/mavros/global_position/compass_hdg', self.hdg_cb, qos_profile=qos_sensor, callback_group=self.parallel_cb_group)
@@ -111,9 +111,9 @@ class VisualLocalizationNode(Node):
     def hdg_cb(self, msg): self.current_heading = msg.data
     def state_cb(self, msg): self.mavros_state = msg
 
-    # --- HIZ CALLBACK ---
+    # --- VELOCITY CALLBACK ---
     def velocity_callback(self, msg):
-        # LAND modundaysak tahmin yapmayı bırak (Drift olmasın)
+        # If in LAND mode, stop estimation (to avoid drift)
         if self.mavros_state.mode == "LAND": return
 
         now = time.time()
@@ -128,15 +128,15 @@ class VisualLocalizationNode(Node):
         self.current_y += msg.twist.linear.y * dt
         self.publish_current_pose() 
 
-    # --- GÖRÜNTÜ CALLBACK ---
+    # --- IMAGE CALLBACK ---
     def image_callback(self, msg):
-        # İnişteysek işlem yapma
+        # Do not process if landing
         if self.mavros_state.mode == "LAND" or self.is_landing: 
             if self.mavros_state.mode == "LAND": self.is_landing = True
-            self.get_logger().info("SIFT EŞLEŞMESİ GELDİ! NORMAL MODA DÖNÜLÜYOR.")
+            self.get_logger().info("SIFT MATCH ACQUIRED! RETURNING TO NORMAL MODE.")
             return
         
-        # Düşük irtifada (Kalkış/İniş) visual processing yapma
+        # Skip visual processing at low altitudes (Takeoff/Landing)
         if self.current_altitude < 25.0: 
             self.last_db_success_time = time.time()
             return 
@@ -145,56 +145,56 @@ class VisualLocalizationNode(Node):
             cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
             now = time.time()
             
-            # --- HER ZAMAN KAYIT AL (DAİMİ BREADCRUMB) ---
+            # --- ALWAYS RECORD (CONTINUOUS BREADCRUMBS) ---
             if self.state == "NORMAL":
                 if (now - self.last_keyframe_time) > self.KEYFRAME_INTERVAL:
-                    # SIFT Özelliği Çıkar (detectAndCompute SIFT için çalışır)
+                    # Extract SIFT Features
                     kp, des = self.localizer.sift.detectAndCompute(cv_image, None)
-                    if des is not None and len(des) > 10: # En az 10 özellik olsun
-                        # Stack'e ekle
+                    if des is not None and len(des) > 10: # Require at least 10 features
+                        # Add to Stack
                         self.breadcrumb_stack.append({'des': des, 'hdg': self.current_heading})
                         self.last_keyframe_time = now
 
-            # --- 1. DB EŞLEŞMESİ ARA ---
+            # --- 1. SEARCH DB MATCH ---
             db_match_pos = self.try_get_db_position(cv_image)
             
             if db_match_pos is not None:
-                # --- [A] SAĞLAM ROTA BULUNDU ---
+                # --- [A] SOLID ROUTE FOUND ---
                 match_x, match_y = db_match_pos
                 
-                # Outlier Kontrolü
+                # Outlier Check
                 elapsed_time = now - self.last_db_success_time
                 current_speed = math.sqrt(self.current_vel_x**2 + self.current_vel_y**2)
                 acceptable_diff = (current_speed * elapsed_time * 5.0) + 15.0 
                 dist_error = math.sqrt((match_x - self.current_x)**2 + (match_y - self.current_y)**2)
                 
                 if dist_error < acceptable_diff:
-                    # GEÇERLİ MATCH
+                    # VALID MATCH
                     self.last_db_success_time = now
                     self.current_x = self.SMOOTHING_ALPHA * match_x + (1 - self.SMOOTHING_ALPHA) * self.current_x
                     self.current_y = self.SMOOTHING_ALPHA * match_y + (1 - self.SMOOTHING_ALPHA) * self.current_y
                     
                     if self.state in ["BACKTRACKING", "BRAKING", "HOVER_WAIT"]:
-                        self.get_logger().info("SIFT EŞLEŞMESİ GELDİ! NORMAL MODA DÖNÜLÜYOR.")
+                        self.get_logger().info("SIFT MATCH ACQUIRED! RETURNING TO NORMAL MODE.")
                         self.switch_to_normal_mode()
 
                     self.log_to_csv("DB_MATCH", self.current_x, self.current_y)
                 else:
-                    self.get_logger().warn(f"Outlier Match Reddedildi: Fark {dist_error:.1f}m")
+                    self.get_logger().warn(f"Outlier Match Rejected: Diff {dist_error:.1f}m")
 
-            # --- [B] DB EŞLEŞMESİ YOK ---
+            # --- [B] NO DB MATCH ---
             else:
                 time_since_last_match = now - self.last_db_success_time
                 
                 if self.state == "NORMAL":
                     if time_since_last_match > self.DB_TIMEOUT:
-                        self.get_logger().error(f"TIMEOUT! BACKTRACK BAŞLATILIYOR.")
+                        self.get_logger().error(f"TIMEOUT! INITIATING BACKTRACK.")
                         self.switch_to_backtrack_mode()
                 
                 elif self.state == "BRAKING":
                     self.send_control(0.0, self.current_heading)
                     if (now - self.brake_start_time) > self.BRAKE_DURATION:
-                        self.get_logger().info("Fren bitti. Geri dönüş başlıyor.")
+                        self.get_logger().info("Braking complete. Returning.")
                         self.state = "BACKTRACKING"
                         for _ in range(min(self.BACKTRACK_SKIP_COUNT, len(self.breadcrumb_stack))):
                             self.breadcrumb_stack.pop()
@@ -204,18 +204,18 @@ class VisualLocalizationNode(Node):
                     self.process_backtrack_logic(cv_image)
                 
                 elif self.state == "HOVER_WAIT":
-                    self.send_control(0.0, self.current_heading) # Dur ve Bekle
+                    self.send_control(0.0, self.current_heading) # Stop and Wait
                     if (now - self.hover_start_time) > self.HOVER_DURATION:
-                        self.get_logger().info("Bekleme süresi doldu. Geriye devam...")
+                        self.get_logger().info("Wait time over. Continuing back...")
                         self.state = "BACKTRACKING"
                         if self.breadcrumb_stack: self.breadcrumb_stack.pop()
             
             self.pub_status.publish(String(data=self.state))
 
         except Exception as e:
-            self.get_logger().error(f'Hata: {str(e)}')
+            self.get_logger().error(f'Error: {str(e)}')
 
-    # --- MOD GEÇİŞLERİ ---
+    # --- MODE TRANSITIONS ---
     def switch_to_backtrack_mode(self):
         self.state = "BRAKING"
         self.brake_start_time = time.time()
@@ -249,10 +249,10 @@ class VisualLocalizationNode(Node):
         if sw == 0: return None
         return (sx/sw, sy/sw)
 
-    # --- BACKTRACK MANTIĞI (SIFT İLE) ---
+    # --- BACKTRACK LOGIC (WITH SIFT) ---
     def process_backtrack_logic(self, cv_image):
         if not self.breadcrumb_stack:
-            self.get_logger().info("İz bitti. Bekliyoruz...")
+            self.get_logger().info("Breadcrumbs exhausted. Waiting...")
             self.switch_to_normal_mode()
             self.last_db_success_time = time.time()
             return
@@ -261,7 +261,7 @@ class VisualLocalizationNode(Node):
         target_des = target_data['des']
         target_hdg = target_data['hdg']
         
-        # SIFT Sınıfındaki match fonksiyonunu kullan
+        # Use match function in SIFT class
         result = self.localizer.match_frame_to_descriptors(cv_image, target_des, min_match_count=6)
         
         if result:
@@ -275,9 +275,9 @@ class VisualLocalizationNode(Node):
             now = time.time()
             dt = now - self.last_waypoint_switch_time
             
-            # SIFT genelde daha iyi skorlar üretir, eşiği 35-40 civarı tutabilirsin
+            # SIFT generally produces better scores, threshold can be ~35-40
             if match_count > 35 and dt > self.MIN_TIME_PER_WAYPOINT:
-                self.get_logger().info(f"Waypoint'e varıldı (Skor: {match_count}). Durup DB bekleniyor...")
+                self.get_logger().info(f"Reached Waypoint (Score: {match_count}). Stopping to wait for DB...")
                 self.state = "HOVER_WAIT"
                 self.hover_start_time = now
                 self.send_control(0.0, self.current_heading)
@@ -285,10 +285,10 @@ class VisualLocalizationNode(Node):
             
             self.send_control(speed_cmd, target_yaw)
         else:
-            self.get_logger().warn("İz Kaybedildi! Referans açıya dönülüyor...")
+            self.get_logger().warn("Track Lost! Returning to reference heading...")
             self.send_control(0.0, target_hdg)
 
-    # ... (Diğer fonksiyonlar standart) ...
+    # ... (Other standard functions) ...
     def publish_current_pose(self):
         pose_msg = PoseStamped()
         pose_msg.header.stamp = self.get_clock().now().to_msg()
