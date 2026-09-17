@@ -1,5 +1,6 @@
 from setuptools import find_packages, setup
 from glob import glob
+import os
 package_name = 'gnss_denied_nav'
 
 setup(
@@ -16,6 +17,8 @@ setup(
         
         # Add config files
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config', 'arducopter_params'),
+            glob('config/arducopter_params/*.param')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
