@@ -53,7 +53,7 @@ class VisualEstimatorNode(Node):
 
         # --- Declare ROS2 Parameters ---
         self.declare_parameter('algorithm', 'SIFT')
-        self.declare_parameter('db_path', '')
+        self.declare_parameter('db_path', '/home/yakup22/frames_2026-01-17_17-22-56/features_db_sift_2000.npz')
         self.declare_parameter('start_lat', -35.3658674)
         self.declare_parameter('start_lon', 149.1652376)
         self.declare_parameter('smoothing_alpha', 0.4)
