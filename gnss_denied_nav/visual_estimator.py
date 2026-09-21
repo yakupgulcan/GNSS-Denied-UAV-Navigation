@@ -19,6 +19,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from std_msgs.msg import Float64, String, Bool
 from mavros_msgs.msg import State
 from cv_bridge import CvBridge
+import os
 import math
 import time
 import csv
@@ -53,7 +54,7 @@ class VisualEstimatorNode(Node):
 
         # --- Declare ROS2 Parameters ---
         self.declare_parameter('algorithm', 'SIFT')
-        self.declare_parameter('db_path', '/home/yakup22/frames_2026-01-17_17-22-56/features_db_sift_2000.npz')
+        self.declare_parameter('db_path', '')
         self.declare_parameter('start_lat', -35.3658674)
         self.declare_parameter('start_lon', 149.1652376)
         self.declare_parameter('smoothing_alpha', 0.4)
@@ -67,12 +68,17 @@ class VisualEstimatorNode(Node):
         # --- Read Parameters ---
         self.algorithm = self.get_parameter('algorithm').get_parameter_value().string_value
         db_path = self.get_parameter('db_path').get_parameter_value().string_value
+        if db_path:
+            db_path = os.path.expanduser(db_path)
         self.start_lat = self.get_parameter('start_lat').get_parameter_value().double_value
         self.start_lon = self.get_parameter('start_lon').get_parameter_value().double_value
 
-        if not db_path:
-            self.get_logger().error('db_path parameter is empty! Set it via config YAML or launch file.')
-            raise ValueError('db_path parameter must be set.')
+        if not db_path or not os.path.exists(db_path):
+            self.get_logger().error(
+                f"Feature database not found at '{db_path}'. "
+                "Please specify a valid 'db_path' in visual_nav_params.yaml or launch file."
+            )
+            raise FileNotFoundError(f"Database file not found: '{db_path}'")
 
         if self.algorithm not in self.ALGORITHM_MAP:
             raise ValueError(f'Unknown algorithm: {self.algorithm}. '
