@@ -22,11 +22,11 @@ from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 # --- IMPORT ---
-# HOG Sınıfını import et (Dosya adını doğru yazdığından emin ol)
+# Import HOG Class (Make sure filename is correct)
 from gnss_denied_nav.hog_detect_match import HOGDetectAndMatch
 
 MATCH_ALGO = 1 
-# Yeni dosya adı
+# New filename
 DB_PATH = ""
 START_LAT = -35.3658674
 START_LON = 149.1652376
@@ -44,15 +44,15 @@ class VisualLocalizationNode(Node):
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'state'])
         
-        # Parametreler
+        # Parameters
         self.declare_parameter('db_path', DB_PATH)
         actual_db_path = self.get_parameter('db_path').get_parameter_value().string_value
         
-        self.get_logger().info('HOG Modülü yükleniyor...')
+        self.get_logger().info('Loading HOG Module...')
         self.localizer = HOGDetectAndMatch(actual_db_path)
-        self.get_logger().info('HOG Veritabanı yüklendi.')
+        self.get_logger().info('HOG Database loaded.')
 
-        # Durum Değişkenleri
+        # State Variables
         self.state = "NORMAL"
         self.current_x = 0.0 
         self.current_y = 0.0 
@@ -70,9 +70,9 @@ class VisualLocalizationNode(Node):
         self.last_keyframe_time = 0
         self.breadcrumb_stack = deque(maxlen=2000)
         
-        # Backtrack Mantığı
-        # HOG Skoru 0-100 arası normalize edildi. 
-        # 80 ve üzeri = Çok iyi eşleşme (Aynı resim)
+        # Backtrack Logic
+        # HOG Score normalized between 0-100. 
+        # 80 and above = Very good match (Same image)
         self.WAYPOINT_MATCH_THRESH = 80.0 
         self.MIN_TIME_PER_WAYPOINT = 2.0 
         self.last_waypoint_switch_time = 0.0
@@ -84,7 +84,7 @@ class VisualLocalizationNode(Node):
         self.BRAKE_DURATION = 2.0 
         self.BACKTRACK_SKIP_COUNT = 5 
 
-        # --- İLETİŞİM ---
+        # --- COMMUNICATION ---
         qos_sensor = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1)
         
         self.pose_pub = self.create_publisher(PoseStamped, '/visual_pose_enu', 10)
@@ -107,7 +107,7 @@ class VisualLocalizationNode(Node):
     def hdg_cb(self, msg): self.current_heading = msg.data
     def state_cb(self, msg): self.mavros_state = msg
 
-    # --- HIZ CALLBACK ---
+    # --- VELOCITY CALLBACK ---
     def velocity_callback(self, msg):
         if self.mavros_state.mode == "LAND" or self.is_landing: 
             self.is_landing = True
@@ -123,15 +123,15 @@ class VisualLocalizationNode(Node):
         self.current_y += msg.twist.linear.y * dt
         self.publish_current_pose() 
 
-    # --- GÖRÜNTÜ CALLBACK ---
+    # --- IMAGE CALLBACK ---
     def image_callback(self, msg):
-        # İnişteysek işlem yapma
+        # Do not process if landing
         if self.mavros_state.mode == "LAND" or self.is_landing: 
             if self.mavros_state.mode == "LAND": self.is_landing = True
-            self.get_logger().info("SIFT EŞLEŞMESİ GELDİ! NORMAL MODA DÖNÜLÜYOR.")
+            self.get_logger().info("SIFT MATCH ACQUIRED! RETURNING TO NORMAL MODE.")
             return
         
-        # Düşük irtifada (Kalkış/İniş) visual processing yapma
+        # Skip visual processing at low altitudes (Takeoff/Landing)
         if self.current_altitude < 25.0: 
             self.last_db_success_time = time.time()
             return 
@@ -140,10 +140,10 @@ class VisualLocalizationNode(Node):
             cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
             now = time.time()
             
-            # --- DAİMİ BREADCRUMB KAYDI ---
+            # --- CONTINUOUS BREADCRUMB RECORDING ---
             if self.state == "NORMAL":
                 if (now - self.last_keyframe_time) > self.KEYFRAME_INTERVAL:
-                    # HOG sınıfında detectAndCompute -> (small_img, hog_vec) döner
+                    # In HOG class detectAndCompute -> returns (small_img, hog_vec)
                     ret = self.localizer.detectAndCompute(cv_image, None)
                     if ret is not None:
                         img_small, hog_vec = ret
@@ -160,7 +160,7 @@ class VisualLocalizationNode(Node):
             if db_match_pos is not None:
                 match_x, match_y = db_match_pos
                 
-                # Outlier Kontrolü
+                # Outlier Check
                 elapsed_time = now - self.last_db_success_time
                 current_speed = math.sqrt(self.current_vel_x**2 + self.current_vel_y**2)
                 acceptable_diff = (current_speed * elapsed_time * 5.0) + 20.0 # HOG biraz daha tolerans isteyebilir
@@ -174,7 +174,7 @@ class VisualLocalizationNode(Node):
                     self.current_y = self.SMOOTHING_ALPHA * match_y + (1 - self.SMOOTHING_ALPHA) * self.current_y
                     
                     if self.state != "NORMAL":
-                        self.get_logger().info("HOG DB EŞLEŞTİ! NORMAL MODA DÖNÜLÜYOR.")
+                        self.get_logger().info("HOG DB MATCHED! RETURNING TO NORMAL MODE.")
                         self.switch_to_normal_mode()
 
                     self.log_to_csv("DB_MATCH", self.current_x, self.current_y)
@@ -187,13 +187,13 @@ class VisualLocalizationNode(Node):
                 
                 if self.state == "NORMAL":
                     if time_since_last_match > self.DB_TIMEOUT:
-                        self.get_logger().error(f"TIMEOUT! BACKTRACK BAŞLATILIYOR.")
+                        self.get_logger().error(f"TIMEOUT! INITIATING BACKTRACK.")
                         self.switch_to_backtrack_mode()
                 
                 elif self.state == "BRAKING":
                     self.send_control(0.0, self.current_heading)
                     if (now - self.brake_start_time) > self.BRAKE_DURATION:
-                        self.get_logger().info("Fren bitti. Geri dönüş.")
+                        self.get_logger().info("Fren bitti. Geri donus.")
                         self.state = "BACKTRACKING"
                         for _ in range(min(self.BACKTRACK_SKIP_COUNT, len(self.breadcrumb_stack))):
                             self.breadcrumb_stack.pop()
@@ -212,9 +212,9 @@ class VisualLocalizationNode(Node):
             self.pub_status.publish(String(data=self.state))
 
         except Exception as e:
-            self.get_logger().error(f'Hata: {str(e)}')
+            self.get_logger().error(f'Error: {str(e)}')
 
-    # --- YARDIMCI FONKSİYONLAR ---
+    # --- HELPER FUNCTIONS ---
     def switch_to_backtrack_mode(self):
         self.state = "BRAKING"
         self.brake_start_time = time.time()
@@ -226,13 +226,13 @@ class VisualLocalizationNode(Node):
         self.pub_override.publish(Bool(data=False))
 
     def try_get_db_position(self, cv_image):
-        # HOG ile skor tabanlı filtreleme
+        # Score-based filtering with HOG
         candidates = self.localizer.get_location(cv_image, top_k=5)
         if not candidates: return None
 
         valid_points = []
         for gps_data, fname, score in candidates:
-            # HOG skor eşiği (Örn: 50 üstü kabul)
+            # HOG score threshold (e.g., accept > 50)
             if score < 50: continue 
             
             if not isinstance(gps_data, dict): continue
@@ -248,7 +248,7 @@ class VisualLocalizationNode(Node):
         # Weighted Average
         sx=0; sy=0; sw=0
         for p in valid_points:
-            w = p['score'] # Skor zaten 0-100 arası, direkt ağırlık olabilir
+            w = p['score'] # Score already 0-100, can be direct weight
             sx += p['x']*w; sy += p['y']*w; sw += w
         
         if sw == 0: return None
@@ -256,7 +256,7 @@ class VisualLocalizationNode(Node):
 
     def process_backtrack_logic(self, cv_image):
         if not self.breadcrumb_stack:
-            self.get_logger().info("İz bitti.")
+            self.get_logger().info("Breadcrumbs exhausted.")
             self.switch_to_normal_mode()
             self.last_db_success_time = time.time()
             return
@@ -271,7 +271,7 @@ class VisualLocalizationNode(Node):
         if result:
             score, error_x, _, _, _, _ = result
             
-            # Hata Yönüne Göre Yaw Düzeltme
+            # Yaw correction based on error direction
             yaw_correction = error_x * 0.05 
             target_yaw = target_hdg + yaw_correction
             
@@ -280,7 +280,7 @@ class VisualLocalizationNode(Node):
             now = time.time()
             dt = now - self.last_waypoint_switch_time
             
-            # Waypoint Geçiş (HOG Skoru Yüksekse)
+            # Waypoint Transition (If HOG Score is High)
             if score > self.WAYPOINT_MATCH_THRESH and dt > self.MIN_TIME_PER_WAYPOINT:
                 self.get_logger().info(f"Waypoint (Skor: {score:.1f}). Bekleniyor...")
                 self.state = "HOVER_WAIT"
@@ -292,8 +292,8 @@ class VisualLocalizationNode(Node):
         else:
             self.send_control(0.0, target_hdg)
 
-    # ... (Diğer: publish_current_pose, send_control, log_to_csv, latlon_to_enu, destroy_node) ...
-    # Bu fonksiyonlar önceki kod ile birebir aynı kalabilir.
+    # ... (Other: publish_current_pose, send_control, log_to_csv, latlon_to_enu, destroy_node) ...
+    # These functions can remain exactly the same as previous code.
     def publish_current_pose(self):
         pose_msg = PoseStamped()
         pose_msg.header.stamp = self.get_clock().now().to_msg()

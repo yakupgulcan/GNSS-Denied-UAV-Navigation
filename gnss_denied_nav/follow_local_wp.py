@@ -39,28 +39,26 @@ class ArduTakeoffNode(Node):
         self.altitude = 0.0
 
         # ---------- PARAMETERS ----------
-        # 2950 M
-        #self.home_lat = -35.3766471     # <-- START GPS (alternative origin)
-        #self.home_lon = 149.1652374
-        self.flight_alt = 30.0
+        self.declare_parameter('home_lat', -35.3658674)
+        self.declare_parameter('home_lon', 149.1652376)
+        self.declare_parameter('flight_alt', 30.0)
+        self.declare_parameter('width_left', 40.0)
+        self.declare_parameter('width_right', 40.0)
+        self.declare_parameter('forward_distance', 600.0)
+        self.declare_parameter('backward_distance', 0.0)
+        self.declare_parameter('corridor_spacing', 20.0)
 
-        # Demo
-        self.home_lat = -35.3658674     # <-- START GPS
-        self.home_lon = 149.1652376 
-        # ENU Waypoints (meters) (Original Map)
-        self.enu_points = [
-            (-40.0, 0.0),
-            (-40.0, 600.0),
-            (-20.0, 600.0),
-            (-20.0, 0.0),
-            (0.0, 0.0),
-            (0.0, 600.0),
-            (20.0, 600.0),
-            (20.0, 0.0),
-            (40.0, 0.0),
-            (40.0, 600.0),
-            (0, 0),
-        ]
+        self.home_lat = float(self.get_parameter('home_lat').value)
+        self.home_lon = float(self.get_parameter('home_lon').value)
+        self.flight_alt = float(self.get_parameter('flight_alt').value)
+        self.width_left = float(self.get_parameter('width_left').value)
+        self.width_right = float(self.get_parameter('width_right').value)
+        self.forward_distance = float(self.get_parameter('forward_distance').value)
+        self.backward_distance = float(self.get_parameter('backward_distance').value)
+        self.corridor_spacing = float(self.get_parameter('corridor_spacing').value)
+
+        # Generate ENU Waypoints dynamically based on rectangular scan parameters
+        self.enu_points = self.generate_grid_waypoints()
 
         # ---------- SUB / PUB ----------
         self.state_sub = self.create_subscription(State, '/mavros/state', self.state_cb, qos)
@@ -125,6 +123,37 @@ class ArduTakeoffNode(Node):
         self.mount_pub.publish(msg)
 
     # ---------- MISSION ----------
+    def generate_grid_waypoints(self):
+        min_x = 0.0 if self.width_left == 0.0 else -abs(self.width_left)
+        max_x = abs(self.width_right)
+        min_y = 0.0 if self.backward_distance == 0.0 else -abs(self.backward_distance)
+        max_y = abs(self.forward_distance)
+        spacing = max(1.0, abs(self.corridor_spacing))
+
+        num_lanes = int(round((max_x - min_x) / spacing)) + 1
+        x_coords = [min_x + i * spacing for i in range(num_lanes)]
+        # Ensure max_x is included if round-off excluded it
+        if abs(x_coords[-1] - max_x) > 0.01 and x_coords[-1] < max_x:
+            x_coords.append(max_x)
+
+        points = []
+        for i, x in enumerate(x_coords):
+            if i % 2 == 0:
+                points.append((x, min_y))
+                points.append((x, max_y))
+            else:
+                points.append((x, max_y))
+                points.append((x, min_y))
+
+        # Return to origin (0, 0) at the end of survey
+        points.append((0.0, 0.0))
+
+        self.get_logger().info(
+            f"Generated survey grid: X[{min_x:.1f}m to {max_x:.1f}m], Y[{min_y:.1f}m to {max_y:.1f}m], "
+            f"spacing={spacing:.1f}m ({len(x_coords)} lanes, {len(points)} waypoints)"
+        )
+        return points
+
     def build_waypoints(self):
         wps = []
 

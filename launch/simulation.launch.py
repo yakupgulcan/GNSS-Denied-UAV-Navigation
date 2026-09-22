@@ -29,29 +29,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch an iris quadcopter in Gazebo and Rviz."""
+"""Launch an iris quadcopter in Gazebo."""
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.actions import IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
-
-from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-
+from launch_ros.actions import Node
+from launch.substitutions import PythonExpression
+import os
 
 def generate_launch_description():
-    """Generate a launch description for a iris quadcopter."""
-    pkg_project_bringup = get_package_share_directory("ardupilot_gz_bringup")
-    pkg_project_gazebo = get_package_share_directory("ardupilot_gz_gazebo")
+    """Generate a launch description for an Iris quadcopter."""
     pkg_ros_gz_sim = get_package_share_directory("ros_gz_sim")
-    pkg_gnss_denied_nav = get_package_share_directory("gnss_denied_nav")
+    pkg_ardupilot_sitl = get_package_share_directory("ardupilot_sitl")
+    pkg_ardupilot_gazebo = get_package_share_directory("ardupilot_gazebo")
+    world = LaunchConfiguration("world")
+    gui = LaunchConfiguration("gui")
+    scenario_params = LaunchConfiguration("scenario_params")
+    #defaults = LaunchConfiguration("defaults")
+    base_defaults = (
+        os.path.join(
+            pkg_ardupilot_gazebo,
+            "config",
+            "gazebo-iris-gimbal.parm",
+        )
+        + ","
+        + os.path.join(
+            pkg_ardupilot_sitl,
+            "config",
+            "default_params",
+            "dds_udp.parm",
+        )
+    )
+    defaults = PythonExpression([
+        "'",
+        base_defaults,
+        ",",
+        scenario_params,
+        "'",
+    ])
+
+    world_path = PathJoinSubstitution(
+        [
+            FindPackageShare("gnss_denied_nav"),
+            "worlds",
+            world,
+        ]
+    )
 
     # Iris.
     iris = IncludeLaunchDescription(
@@ -59,14 +91,16 @@ def generate_launch_description():
             [
                 PathJoinSubstitution(
                     [
-                        FindPackageShare("ardupilot_gz_bringup"),
+                        FindPackageShare("gnss_denied_nav"),
                         "launch",
-                        "robots",
-                        "iris.launch.py",
+                        "iris_custom.launch.py",
                     ]
                 ),
             ]
-        )
+        ),
+        launch_arguments={
+            "defaults": defaults,
+        }.items(),
     )
 
     # Gazebo.
@@ -75,8 +109,7 @@ def generate_launch_description():
             f'{Path(pkg_ros_gz_sim) / "launch" / "gz_sim.launch.py"}'
         ),
         launch_arguments={
-            "gz_args": "-v4 -s -r "
-            f'{Path(pkg_gnss_denied_nav) / "worlds" / "map_changed.sdf"}'
+            "gz_args": ["-v4 -s -r ", world_path]
         }.items(),
     )
 
@@ -85,19 +118,44 @@ def generate_launch_description():
             f'{Path(pkg_ros_gz_sim) / "launch" / "gz_sim.launch.py"}'
         ),
         launch_arguments={"gz_args": "-v4 -g"}.items(),
+        condition=IfCondition(gui),
     )
 
-
+    # MAVROS
+    mavros = Node(
+        package="mavros",
+        executable="mavros_node",
+        output="screen",
+        parameters=[
+            {
+                "fcu_url": "udp://127.0.0.1:14550@14555",
+            }
+        ],
+    )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "rviz", default_value="true", description="Open RViz."
+                "scenario_params",
+                default_value="",
+                description="Scenario-specific ArduPilot parameter file.",
+            ),
+            DeclareLaunchArgument(
+                "world",
+                default_value="map_original.sdf",
+                description="Gazebo world file.",
+            ),
+            DeclareLaunchArgument(
+                "gui",
+                default_value="true",
+                description="Start the Gazebo GUI.",
             ),
             gz_sim_server,
-            #gz_sim_gui,
+            gz_sim_gui,
             iris,
-            #rviz,
+            TimerAction(
+                period=50.0,
+                actions=[mavros],
+            )
         ]
     )
-    

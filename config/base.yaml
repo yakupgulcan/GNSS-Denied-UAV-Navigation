@@ -1,7 +1,0 @@
-tracker_node:
-  ros__parameters:
-    db_path : ""
-    home_lat: ""
-    home_lon: ""
-    target_x :
-    target_y :

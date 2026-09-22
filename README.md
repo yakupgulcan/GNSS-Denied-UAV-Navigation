@@ -8,8 +8,7 @@ This repository provides a visual odometry and navigation system for UAVs in GNS
 
 Before installing this package, you must fully set up the ArduPilot SITL, ROS 2, MAVROS, and Gazebo Harmonic simulation environment. 
 
-Please refer to our detailed setup guide first:
-👉 **[Simulation Setup Guide](docs/simulation_setup.md)**
+Please refer to our detailed setup guide first: 👉 **[Simulation Setup Guide](docs/simulation_setup.md)**
 
 ---
 
@@ -27,107 +26,145 @@ source install/setup.bash
 
 ---
 
-## Configuration
+## Launch Architecture & Workflows
 
-### 1. Configure ArduPilot Parameters (Mission Planner)
-For a true GNSS-denied flight using visual odometry, you must explicitly disable the physical GPS and configure the Extended Kalman Filter (EK3) to ignore it. You also need to configure the gimbal settings.
+The package provides automated, single-command launch workflows for both mapping and autonomous navigation:
 
-Connect Mission Planner to your SITL instance, go to the **Config** tab > **Full Parameter List**, and apply the following parameters:
+| Launch File | Purpose | Key Nodes Launched |
+| :--- | :--- | :--- |
+| **`gnss_available_data_collection.launch.py`** | Records survey camera frames + GPS telemetry to build the visual database. | Gazebo, ArduPilot SITL (`gnss_available.param`), MAVROS, `save_frames`, `follow_local_wp` |
+| **`gnss_denied_navigation.launch.py`** | Executes autonomous vision-based flight in a GPS-denied environment. | Gazebo, ArduPilot SITL (`gnss_denied.param`), MAVROS, `nav_gcs`, `optical_flow`, `visual_estimator`, `base_controller`, `navigation_runner` |
+| **`simulation.launch.py`** | Base simulation bringup. | Gazebo Harmonic server & GUI, ArduPilot SITL (`iris_custom`), MAVROS |
 
-**Enable Gimbal Control via GCS:**
-Do this before building the feature database and ensure that the camera faces downward when collecting images.
-- `MAV_GCS_SYSID` = `1`
-- `MAV_GCS_SYSID_HI` = `255`
+---
 
-**Disable GPS & Failsafes:**
-Do this step after building the feature database.
-- `GPS1_TYPE` = `0` *(Disables the default GPS)*
-- `AHRS_GPS_USE` = `0` *(Disables AHRS GPS usage)*
-- `EK3_SRC1_POSXY` = `0` *(Stops EK3 from using GPS for position)*
-- `EK3_SRC1_VELXY` = `0` *(Stops EK3 from using GPS for velocity)*
-- `EK3_SRC1_VELZ` = `0` 
-- `ARMING_CHECK` = `0` *(Disables pre-arm checks that require GPS lock)*
-- `FS_DR_ENABLE` = `0` *(Disables dead reckoning failsafe)*
-- `FS_EKF_ACTION` = `0` *(Disables EKF failsafe action)*
-- `FS_EKF_THRESH` = `0`
+## Workflow Guide
 
-Click **Write Parameters** and reboot the flight controller.
+### Step 1: Collect Mapping Dataset (GNSS Available)
 
-### 2. Flight Control Architecture (ALT_HOLD & RC Override)
-Because standard ArduPilot waypoint navigation (`AUTO` mode) requires a highly confident GPS lock, this system instead operates in **`ALT_HOLD`** mode. 
-Our ROS 2 navigation nodes compute the positional error from the visual estimator and translate it into simulated joystick commands using **MAVLink RC Overrides**. 
-By overriding the Roll, Pitch, and Yaw channels, the system autonomously flies the drone along the visual trajectory while the flight controller handles basic stabilization.
+Before autonomous navigation can operate without GPS, you need a visual database (`.npz`) of the flight area. Run the dedicated data collection launch file:
 
-### 3. Prepare the Visual Database
-The navigation system requires a geographic visual database (`.npz` format). 
-Due to their large file size, visual databases are *not* included in this Git repository. You must generate them using a prior flight recording:
+```bash
+ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py
+```
 
-1. Fly a mapping pass over your target environment with standard GPS enabled.
-2. Record frames and telemetry using:
-   ```bash
-   ros2 run gnss_denied_nav save_frames
-   ```
-3. Build the database (e.g., using SIFT):
-   ```bash
-   python3 src/gnss_denied_nav/gnss_denied_nav/build_features/build_feature_database_sift.py
-   ```
+This launch file:
+1. Launches Gazebo and ArduPilot SITL with GPS enabled (`gnss_available.param`).
+2. Connects MAVROS.
+3. Automatically starts `save_frames` to record downward-facing camera images synchronized with GPS tags to `~/frames_<timestamp>/`.
+4. Executes `follow_local_wp` to autonomously take off, point the camera gimbal straight down (-90°), and fly a parametric survey grid across the flight corridor.
 
-### 4. Set the DB Path in ROS 2 Parameters
-Open the configuration file located at `config/visual_nav_params.yaml` and update the `db_path` variable to point to your newly generated `.npz` file:
-
-```yaml
-visual_estimator:
-  ros__parameters:
-    db_path: "/home/username/path/to/your/features_db_sift_2000.npz"
-    algorithm: "SIFT"  # Options: SIFT, ORB, AKAZE, BRISK, HOG
+*(Optional)* You can customize the survey area dimensions via launch arguments:
+```bash
+ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py \
+    width_left:=40.0 \
+    width_right:=40.0 \
+    forward_distance:=600.0 \
+    corridor_spacing:=20.0 \
+    flight_alt:=30.0
 ```
 
 ---
 
-## Running the System
+### Step 2: Build the Visual Feature Database
 
-**1. Start the Simulation**
+Process the recorded image frames into a compressed feature database (e.g., using SIFT):
+
 ```bash
-ros2 launch ardupilot_gz_bringup iris_runway.launch.py
+python3 src/gnss_denied_nav/gnss_denied_nav/build_features/build_feature_database_sift.py
 ```
 
-**2. Start MAVROS**
-```bash
-ros2 launch mavros apm.launch fcu_url:=udp://127.0.0.1:14550@14555
+Other available extractors in `build_features/`: `build_feature_database_orb.py`, `_akaze.py`, `_brisk.py`, `_hog.py`.
+
+---
+
+### Step 3: Configure Parameters
+
+All tunable parameters are consolidated into a single configuration file at `config/visual_nav_params.yaml`.
+
+Open `config/visual_nav_params.yaml` and set `db_path` to your generated `.npz` file:
+
+```yaml
+visual_estimator_node:
+  ros__parameters:
+    db_path: "/home/username/path/to/your/features_db_sift_2000.npz"
+    algorithm: "SIFT"  # Options: SIFT, ORB, AKAZE, BRISK, HOG
+    db_path: "~/frames_2026-01-17_17-22-56/features_db_sift_2000.npz"
 ```
 
-**3. Run the Base Controller**
-This node interfaces directly with MAVROS to send altitude and velocity RC overrides.
+You can also tune flight speed, target coordinates (`target_pos_x`, `target_pos_y`), and PID control gains in this file.
+
+---
+
+### Step 4: Run GNSS-Denied Autonomous Navigation
+
+Once your database is ready and configured, start the full GNSS-denied navigation pipeline with a single command:
+
 ```bash
-ros2 run gnss_denied_nav base_controller --ros-args --params-file src/gnss_denied_nav/config/visual_nav_params.yaml
+ros2 launch gnss_denied_nav gnss_denied_navigation.launch.py
 ```
 
-**4. Run the Visual Estimator**
-This is the core vision pipeline. It consumes camera images, matches them against the database, and publishes `/visual_gps`.
+This single command automatically:
+1. Starts the Gazebo simulation and loads ArduPilot with GPS disabled and EKF failsafes bypassed (`config/arducopter_params/gnss_denied.param`).
+2. Starts MAVROS with the proper FCU bridge configuration.
+3. Sequentially launches the vision and control nodes after simulation stabilization:
+   - **`nav_gcs`**: Ground station GUI displaying real-time tracking, odometry, and feature matches.
+   - **`optical_flow`**: Computes visual velocity and altitude-scaled motion vectors.
+   - **`visual_estimator`**: Matches incoming camera frames against your visual database to estimate ENU position and manages breadcrumb backtracking.
+   - **`base_controller`**: Translates position and velocity commands into MAVLink RC Overrides (`ALT_HOLD` mode).
+   - **`navigation_runner`**: Autonomous planner that tracks waypoints toward the target position.
+
+*(Optional)* You can supply a custom parameters file:
 ```bash
-ros2 run gnss_denied_nav visual_estimator --ros-args --params-file src/gnss_denied_nav/config/visual_nav_params.yaml
+ros2 launch gnss_denied_nav gnss_denied_navigation.launch.py params_file:=/path/to/custom_params.yaml
 ```
 
-**5. Run the Navigation Runner**
-This node handles autonomous waypoint tracking, PID control, and the safety backtracking logic.
-```bash
-ros2 run gnss_denied_nav navigation_runner --ros-args --params-file src/gnss_denied_nav/config/visual_nav_params.yaml
-```
+---
 
-***(Optional)* Launch the GCS GUI**
-For a comprehensive view of the map and feature matches, run:
-```bash
-ros2 run gnss_denied_nav nav_gcs
-```
+## Flight Control Architecture
+
+Standard ArduPilot waypoint navigation (`AUTO` mode) requires a confident GPS lock. In a GNSS-denied environment:
+- The system operates in **`ALT_HOLD`** mode.
+- The ROS 2 navigation nodes compute positional errors from the visual estimator.
+- Control outputs are sent to the flight controller as simulated joystick commands using **MAVLink RC Overrides** on Roll, Pitch, Throttle, and Yaw channels, allowing autonomous flight while ArduPilot maintains attitude and altitude stabilization.
 
 ---
 
 ## Repository Structure
-- `gnss_denied_nav/`: Contains the core ROS 2 nodes (`visual_estimator.py`, `navigation_runner.py`, `base_controller.py`).
-- `gnss_denied_nav/*_detect_match.py`: Algorithm-specific computer vision matching logic.
-- `gnss_denied_nav/build_features/`: Pipeline scripts for generating the `.npz` visual feature databases.
-- `config/`: YAML parameter files containing easily tunable variables.
-- `docs/`: Supplementary documentation and setup guides.
+
+```text
+gnss_denied_nav/
+├── config/
+│   ├── arducopter_params/
+│   │   ├── gnss_available.param   # ArduPilot parameter overrides (GPS enabled)
+│   │   └── gnss_denied.param      # ArduPilot parameter overrides (GPS disabled)
+│   └── visual_nav_params.yaml     # Unified parameter configuration for all nodes
+├── docs/
+│   └── simulation_setup.md        # Environment setup and dependencies guide
+├── gnss_denied_nav/
+│   ├── build_features/            # Offline database generator scripts
+│   ├── *_detect_match.py          # Feature extraction & matching implementations
+│   ├── base_controller.py         # RC override PID flight controller
+│   ├── follow_local_wp.py         # Parametric survey mission generator
+│   ├── nav_gcs.py                 # Ground control visualization GUI
+│   ├── navigation_runner.py       # High-level waypoint planner & safety logic
+│   ├── optical_flow.py            # Optical flow velocity estimation
+│   ├── save_frames.py             # Synchronous image & telemetry recorder
+│   └── visual_estimator.py        # Core visual localization node
+├── launch/
+│   ├── gnss_available_data_collection.launch.py  # Automated mapping pipeline
+│   ├── gnss_denied_navigation.launch.py          # Autonomous navigation pipeline
+│   ├── iris_custom.launch.py                     # Iris quadcopter spawn & SITL
+│   └── simulation.launch.py                      # Simulation & MAVROS bringup
+├── models/                        # Gazebo drone & world models
+├── worlds/                        # Gazebo simulation worlds
+├── package.xml
+├── setup.py
+└── README.md
+```
+
+---
 
 ## License
+
 This project is licensed under the Apache 2.0 License.
