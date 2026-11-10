@@ -4,6 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -23,6 +24,18 @@ def generate_launch_description():
         "params_file",
         default_value=default_params_file,
         description="Path to YAML file containing visual navigation parameters",
+    )
+
+    world_arg = DeclareLaunchArgument(
+        "world",
+        default_value="map_changed.sdf",
+        description="Gazebo world file for GNSS-denied test flight (default: map_changed.sdf)",
+    )
+
+    enable_logger_arg = DeclareLaunchArgument(
+        "enable_logger",
+        default_value="true",
+        description="Automatically record visual performance metrics and ground-truth errors to CSV",
     )
 
     scenario_params = os.path.join(
@@ -46,6 +59,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "scenario_params": scenario_params,
+            "world": LaunchConfiguration("world"),
         }.items(),
     )
 
@@ -83,8 +97,17 @@ def generate_launch_description():
         output="screen",
     )
 
+    perf_metrics_logger = Node(
+        package="gnss_denied_nav",
+        executable="perf_metrics_logger",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("enable_logger")),
+    )
+
     return LaunchDescription([
         params_file_arg,
+        world_arg,
+        enable_logger_arg,
         simulation,
 
         TimerAction(
@@ -99,7 +122,7 @@ def generate_launch_description():
 
         TimerAction(
             period=66.0,
-            actions=[visual_estimator],
+            actions=[visual_estimator, perf_metrics_logger],
         ),
 
         TimerAction(
