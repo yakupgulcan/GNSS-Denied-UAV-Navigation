@@ -9,12 +9,12 @@ visual_estimator_node:
   ros__parameters:
     # Algorithm: SIFT, ORB, BRISK, AKAZE, HOG
     algorithm: "SIFT"
-    db_path: ""  # Path to feature database (.npz file)
+    db_path: "~/frames_2026-11-02_15-19-00/features_db_sift_2000.npz"  # Path to feature database (.npz file)
     
     # GPS reference origin for ENU conversions
-    start_lat: -35.3658674
-    start_lon: 149.1652376
-    
+    start_lat: -35.3766471
+    start_lon: 149.1652375
+
     # Smoothing factor for position updates (0.0 = no correction, 1.0 = full snap)
     smoothing_alpha: 0.4
     
@@ -35,12 +35,12 @@ visual_navigation_planner:
   ros__parameters:
     # Target position in local ENU frame (meters)
     target_pos_x: 0.0
-    target_pos_y: 550.0
+    target_pos_y: 2900.0
     acceptance_radius: 30.0
     
     # GPS reference origin
-    start_lat: -35.3658674
-    start_lon: 149.1652376
+    start_lat: -35.3766471
+    start_lon: 149.1652375
     
     # Flight parameters
     target_altitude: 30.0

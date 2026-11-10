@@ -4,7 +4,7 @@ import os
 import json
 
 # --- SETTINGS ---
-frames_path = "~/frames_2026-01-17_17-22-56"
+frames_path = "~/frames_2026-11-02_15-19-00"
 N_FEATURES = 2000 # Good starting point for SIFT
 
 def build_sift_database(frames_dir):
