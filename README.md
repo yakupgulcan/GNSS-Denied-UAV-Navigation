@@ -51,18 +51,21 @@ ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py
 This launch file:
 1. Launches Gazebo and ArduPilot SITL with GPS enabled (`gnss_available.param`).
 2. Connects MAVROS.
-3. Automatically starts `save_frames` to record downward-facing camera images synchronized with GPS tags to `~/frames_<timestamp>/`.
-4. Executes `follow_local_wp` to autonomously take off, point the camera gimbal straight down (-90°), and fly a parametric survey grid across the flight corridor.
+3. Automatically starts `save_frames` to record downward-facing camera images synchronized with GPS tags to `~/frames_<timestamp>/` once above safe recording altitude (`min_record_alt:=25.0`).
+4. Executes `follow_local_wp` to autonomously take off, point the camera gimbal straight down (-90°), and fly a parametric corridor swath survey across the planned flight path.
+5. **Clean Data Finalization**: When the final survey swath waypoint is reached (e.g. at 40, 3000), `follow_local_wp` automatically stops frame recording via `/dataset/record` so the return flight to origin (0, 0) does not pollute the dataset.
+6. **Automated Touchdown**: Once the drone arrives back at origin (0, 0), it automatically triggers `RTL` to land and disarm (`rtl_on_finish:=true`).
 
-*(Optional)* You can customize the survey area dimensions via launch arguments:
+*(Optional)* You can customize the corridor survey dimensions via launch arguments:
 ```bash
 ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py \
-    width_left:=40.0 \
-    width_right:=40.0 \
-    forward_distance:=600.0 \
-    corridor_spacing:=20.0 \
+    target_x:=0.0 \
+    target_y:=3000.0 \
+    corridor_width:=80.0 \
+    lane_spacing:=20.0 \
     flight_alt:=30.0
 ```
+*(For a single-lane survey along a specific corridor, e.g. at X=40, set `target_x:=40.0 corridor_width:=0.0`)*
 
 ---
 
