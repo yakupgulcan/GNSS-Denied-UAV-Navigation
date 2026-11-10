@@ -52,13 +52,12 @@ class VisualNavNode(Node):
         
         # --- NAVIGATION SETTINGS ---
         self.target_x = 0.0
-        self.target_y = 550.0
-        self.acceptance_radius = 20.0
+        self.target_y = 2900.0
+        self.acceptance_radius = 30.0
         
         # Start GPS Coordinate
-        self.START_LAT = -35.3658674     # <-- START GPS
+        self.START_LAT = -35.3766471   # <-- START GPS
         self.START_LON = 149.1652376 
-        
         # State Variables
         self.current_state = State()
         self.current_pos = {"x": 0.0, "y": 0.0} # ENU (Meters)

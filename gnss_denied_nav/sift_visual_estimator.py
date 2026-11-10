@@ -27,7 +27,7 @@ from gnss_denied_nav.sift_detect_match import SIFTDetectAndMatch
 
 MATCH_ALGO = 2 # 0=ORB, 1=HOG, 2=SIFT
 # SIFT Database Path (must be generated with build_sift_database.py)
-DB_PATH = ""
+DB_PATH = "/home/yakup22/frames_2026-11-02_15-19-00/features_db_sift_2000.npz"
 START_LAT = -35.3658674
 START_LON = 149.1652376
 
