@@ -21,6 +21,7 @@ from mavros_msgs.msg import State
 from cv_bridge import CvBridge
 import os
 import math
+import threading
 import time
 import csv
 from datetime import datetime
@@ -33,6 +34,7 @@ from gnss_denied_nav.brisk_detect_match import BRISKDetectAndMatch
 from gnss_denied_nav.hog_detect_match import HOGDetectAndMatch
 from gnss_denied_nav.sift_detect_match import SIFTDetectAndMatch
 from gnss_denied_nav.akaze_detect_match import AKAZEDetectAndMatch
+from gnss_denied_nav import geo
 
 
 class VisualEstimatorNode(Node):
@@ -51,6 +53,8 @@ class VisualEstimatorNode(Node):
         super().__init__('visual_estimator_node')
         self.is_landing = False
         self.parallel_cb_group = ReentrantCallbackGroup()
+        # Only one frame is processed at a time; frames arriving meanwhile are dropped.
+        self.frame_lock = threading.Lock()
 
         # --- Declare ROS2 Parameters ---
         self.declare_parameter('algorithm', 'SIFT')
@@ -64,6 +68,12 @@ class VisualEstimatorNode(Node):
         self.declare_parameter('backtrack_skip_count', 5)
         self.declare_parameter('brake_duration', 2.0)
         self.declare_parameter('min_time_per_waypoint', 0.2)
+        # Start localized at the known take-off point (ENU origin) so the pose is
+        # valid from the ground and the first database fix is gated like any other.
+        self.declare_parameter('init_at_home', False)
+        # Breadcrumb backtracking drives base_controller; disable it when the
+        # autopilot flies the vehicle (GPS_INPUT + GUIDED pipeline).
+        self.declare_parameter('enable_backtrack', True)
 
         # --- Read Parameters ---
         self.algorithm = self.get_parameter('algorithm').get_parameter_value().string_value
@@ -105,7 +115,10 @@ class VisualEstimatorNode(Node):
         # --- State Variables ---
         self.state = "NORMAL"  # NORMAL, BRAKING, BACKTRACKING
         self.mavros_state = State()
-        self.is_localized = False
+        self.init_at_home = self.get_parameter('init_at_home').get_parameter_value().bool_value
+        self.enable_backtrack = self.get_parameter('enable_backtrack').get_parameter_value().bool_value
+        self.is_localized = self.init_at_home
+        self.last_timeout_warn = 0.0
 
         self.current_x = 0.0
         self.current_y = 0.0
@@ -152,12 +165,19 @@ class VisualEstimatorNode(Node):
         self.SMOOTHING_ALPHA = self.get_parameter('smoothing_alpha').get_parameter_value().double_value
         self.current_altitude = 0.0
 
+        # When the pose feeds the autopilot it must be a steady stream, independent
+        # of the velocity callbacks (also on the ground and during landing).
+        if self.init_at_home:
+            self.create_timer(0.1, self.publish_current_pose, callback_group=self.parallel_cb_group)
+
     def alt_cb(self, msg): self.current_altitude = msg.data
     def hdg_cb(self, msg): self.current_heading = msg.data
     def state_cb(self, msg): self.mavros_state = msg
 
     def velocity_callback(self, msg):
-        if self.mavros_state.mode == "LAND": return
+        if self.mavros_state.mode == "LAND":
+            # No dead reckoning during landing (flow is unreliable near the ground).
+            return
         now = time.time()
         dt = now - self.last_vel_time
         self.last_vel_time = now
@@ -166,7 +186,8 @@ class VisualEstimatorNode(Node):
         self.current_vel_y = msg.twist.linear.y
         self.current_x += msg.twist.linear.x * dt
         self.current_y += msg.twist.linear.y * dt
-        self.publish_current_pose() 
+        if not self.init_at_home:
+            self.publish_current_pose()
 
     def image_callback(self, msg):
         if self.mavros_state.mode == "LAND" or self.is_landing:
@@ -177,12 +198,17 @@ class VisualEstimatorNode(Node):
             self.last_db_success_time = time.time() 
             return
 
+        if not self.frame_lock.acquire(blocking=False):
+            return  # previous frame still being processed
+
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
             self.process_visual_data(cv_image)
-            
+
         except Exception as e:
-            self.get_logger().error(f'Img Callback Hata: {str(e)}')
+            self.get_logger().error(f'Image callback error: {str(e)}')
+        finally:
+            self.frame_lock.release()
 
     
     
@@ -271,8 +297,13 @@ class VisualEstimatorNode(Node):
             
             if self.state == "NORMAL":
                 if time_since_last_match > self.DB_TIMEOUT:
-                    self.get_logger().error(f"TIMEOUT! INITIATING BACKTRACK.")
-                    self.switch_to_backtrack_mode()
+                    if self.enable_backtrack:
+                        self.get_logger().error(f"TIMEOUT! INITIATING BACKTRACK.")
+                        self.switch_to_backtrack_mode()
+                    elif now - self.last_timeout_warn > 5.0:
+                        self.last_timeout_warn = now
+                        self.get_logger().warn(
+                            f"No database fix for {time_since_last_match:.0f}s: dead reckoning only.")
             
             elif self.state == "BRAKING":
                 self.send_control(0.0, self.current_heading)
@@ -417,16 +448,10 @@ class VisualEstimatorNode(Node):
         self.csv_file.flush()
 
     def latlon_to_enu(self, lat, lon):
-        d_lat = lat - self.start_lat
-        d_lon = lon - self.start_lon
-        north = d_lat * 111132.0
-        east = d_lon * (111132.0 * math.cos(math.radians(self.start_lat)))
-        return east, north
+        return geo.latlon_to_enu(lat, lon, self.start_lat, self.start_lon)
 
     def enu_to_latlon(self, x, y):
-        d_lat = y / 111132.0
-        d_lon = x / (111132.0 * math.cos(math.radians(self.start_lat)))
-        return self.start_lat + d_lat, self.start_lon + d_lon
+        return geo.enu_to_latlon(x, y, self.start_lat, self.start_lon)
 
     def destroy_node(self):
         if hasattr(self, 'csv_file'): self.csv_file.close()
