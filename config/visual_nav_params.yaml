@@ -85,3 +85,31 @@ velocity_yaw_controller:
     pid_alt_kp: 20.0
     pid_alt_ki: 2.0
     pid_alt_kd: 5.0
+
+# =============================================================================
+# GUIDED pipeline (gnss_denied_guided.launch.py): the visual estimate is sent
+# to ArduPilot as GPS_INPUT and the autopilot flies the mission itself.
+# =============================================================================
+
+# --- GPS Input Bridge (visual estimate -> MAVLink GPS_INPUT) ---
+gps_input_bridge:
+  ros__parameters:
+    publish_rate: 5.0         # ArduPilot expects a steady 5 Hz GPS
+    stale_timeout: 1.0        # stop the stream if the estimate is older (s)
+    origin_alt_msl: 584.0     # home altitude AMSL (m)
+    horiz_accuracy: 4.0       # reported 1-sigma (m); the EKF only aligns below 5 m
+    vert_accuracy: 3.0
+    hdop: 1.0
+    satellites_visible: 10
+
+# --- Guided Mission (takeoff -> target -> land in GUIDED) ---
+guided_mission:
+  ros__parameters:
+    start_lat: -35.3766471
+    start_lon: 149.1652375
+    target_pos_x: 0.0
+    target_pos_y: 2900.0
+    target_altitude: 30.0
+    acceptance_radius: 10.0
+    settle_time: 5.0
+    land_on_arrival: true

@@ -128,6 +128,22 @@ ros2 launch gnss_denied_nav gnss_denied_navigation.launch.py \
 
 ---
 
+### Step 4b (experimental): Let ArduPilot Fly — GPS_INPUT + GUIDED
+
+Instead of RC overrides in `ALT_HOLD`, this pipeline feeds the visual estimate to ArduPilot as a MAVLink `GPS_INPUT` stream and lets the autopilot's own EKF and position controller fly the mission in `GUIDED`:
+
+```bash
+ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
+```
+
+- ArduPilot is loaded with `config/arducopter_params/gnss_denied_fake_gps.param` (`GPS1_TYPE=14`, EKF position from GPS, no GPS velocity, arming checks and EKF failsafe enabled).
+- **`visual_estimator`** starts localized at the known take-off point (`init_at_home`), so the pose is valid on the ground and the first database fix is gated like any other. Backtracking is disabled.
+- **`gps_input_bridge`** converts `/visual_gps` to `/mavros/gps_input/gps_input`. If the estimate goes stale the stream stops and ArduPilot's failsafes apply.
+- **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
+- `base_controller` and `navigation_runner` are not used. Add `gui:=false` to run without the Gazebo GUI and ground station window.
+
+---
+
 ### Step 5: Performance Analysis & Benchmarking
 
 During autonomous navigation, performance data is automatically logged to CSV files in your active workspace directory:
