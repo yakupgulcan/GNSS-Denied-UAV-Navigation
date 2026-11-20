@@ -38,6 +38,8 @@ setup(
             'navigation_runner = gnss_denied_nav.navigation_runner:main',
             'base_controller = gnss_denied_nav.base_controller:main',
             'nav_gcs = gnss_denied_nav.nav_gcs:main',
+            'gps_input_bridge = gnss_denied_nav.gps_input_bridge:main',
+            'guided_mission = gnss_denied_nav.guided_mission:main',
 
             # Algorithm-specific visual estimators
             'orb_visual_estimator = gnss_denied_nav.orb_visual_estimator:main',
