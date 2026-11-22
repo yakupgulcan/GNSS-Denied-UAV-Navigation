@@ -89,9 +89,9 @@ def generate_launch_description():
         executable="visual_estimator",
         parameters=[
             LaunchConfiguration("params_file"),
-            # The autopilot flies the vehicle: start at the known home position
-            # and do not issue backtracking commands.
-            {"init_at_home": True, "enable_backtrack": False},
+            # The autopilot needs a valid position from the ground: start at
+            # the known home position.
+            {"init_at_home": True},
         ],
         output="screen",
     )

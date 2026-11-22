@@ -41,12 +41,9 @@ setup(
             'gps_input_bridge = gnss_denied_nav.gps_input_bridge:main',
             'guided_mission = gnss_denied_nav.guided_mission:main',
 
-            # Algorithm-specific visual estimators
-            'orb_visual_estimator = gnss_denied_nav.orb_visual_estimator:main',
-            'sift_visual_estimator = gnss_denied_nav.sift_visual_estimator:main',
-            'brisk_visual_estimator = gnss_denied_nav.brisk_visual_estimator:main',
-            'hog_visual_estimator = gnss_denied_nav.hog_visual_estimator:main',
-            'akaze_visual_estimator = gnss_denied_nav.akaze_visual_estimator:main',
+            # Map building and offline evaluation
+            'build_map_db = gnss_denied_nav.tools.build_map_db:main',
+            'eval_localization = gnss_denied_nav.tools.eval_localization:main',
 
             # Utility nodes
             'save_frames = gnss_denied_nav.save_frames:main',
@@ -56,7 +53,6 @@ setup(
             'takeoff_stabilize_p_controller = gnss_denied_nav.takeoff_stabilize_p_controller:main',
             'follow_waypoints = gnss_denied_nav.follow_waypoints:main',
             'follow_local_wp = gnss_denied_nav.follow_local_wp:main',
-            'visual_backtrackt = gnss_denied_nav.visual_backtrackt:main',
         ],
     },
 )

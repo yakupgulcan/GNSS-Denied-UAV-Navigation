@@ -7,28 +7,30 @@
 # --- Visual Estimator Node ---
 visual_estimator_node:
   ros__parameters:
-    # Algorithm: SIFT, ORB, BRISK, AKAZE, HOG
-    algorithm: "SIFT"
-    db_path: "~/frames_2026-11-02_15-19-00/features_db_sift_2000.npz"  # Path to feature database (.npz file)
-    
+    # Map database built with build_map_db (the feature method is read from it).
+    # Legacy build_feature_database_* files are still accepted.
+    db_path: "~/frames_2026-11-02_15-19-00/features_db_sift_2000.npz"
+
     # GPS reference origin for ENU conversions
     start_lat: -35.3766471
     start_lon: 149.1652375
 
+    # Camera horizontal FOV (rad); /camera/image is the 2.0 rad gimbal camera
+    camera_hfov: 2.0
+
     # Smoothing factor for position updates (0.0 = no correction, 1.0 = full snap)
     smoothing_alpha: 0.4
-    
-    # Database match timeout before triggering backtrack (seconds)
-    db_timeout: 12.0
-    
-    # Breadcrumb recording interval (seconds)
-    keyframe_interval: 1.0
-    
-    # Backtrack parameters
-    backtrack_speed: -1.5
-    backtrack_skip_count: 5
-    brake_duration: 2.0
-    min_time_per_waypoint: 0.2
+
+    # No matching below this height above take-off (m)
+    min_altitude: 15.0
+
+    # Map frames matched per camera frame, nearest to the predicted position
+    max_candidates: 3
+
+    # Search radius around the predicted position (m); grows without fixes
+    search_radius: 40.0
+    search_radius_growth: 2.0   # m per second since the last fix
+    max_search_radius: 150.0
 
 # --- Navigation Runner (Planner) ---
 visual_navigation_planner:
