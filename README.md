@@ -1,6 +1,6 @@
 # GNSS-Denied UAV Navigation via Visual Localization
 
-This repository provides a visual odometry and navigation system for UAVs in GNSS-denied environments. It uses real-time computer vision feature matching (SIFT, ORB, AKAZE, BRISK, HOG) against a previously mapped visual database to estimate the drone's position, and autonomously backtracks if the visual fix is lost.
+This repository provides a visual odometry and navigation system for UAVs in GNSS-denied environments. It matches camera frames against a georeferenced map of survey frames (SIFT, ORB, AKAZE or BRISK features), verifies each match with a RANSAC homography and converts it into a metric ENU position, and dead-reckons with optical flow between fixes.
 
 ---
 
@@ -69,15 +69,23 @@ ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py \
 
 ---
 
-### Step 2: Build the Visual Feature Database
+### Step 2: Build the Map Database
 
-Process the recorded image frames into a compressed feature database (e.g., using SIFT):
+Extract features from the recorded survey frames into a map database:
 
 ```bash
-python3 src/gnss_denied_nav/gnss_denied_nav/build_features/build_feature_database_sift.py
+ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-Other available extractors in `build_features/`: `build_feature_database_orb.py`, `_akaze.py`, `_brisk.py`, `_hog.py`.
+This writes `~/frames_<timestamp>/map_sift.npz`. Other methods: `--method ORB | AKAZE | BRISK`, with `--n-features` (SIFT/ORB) or `--threshold` (AKAZE/BRISK).
+
+Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
+
+```bash
+ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift.npz
+```
+
+Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior.
 
 ---
 
@@ -90,9 +98,7 @@ Open `config/visual_nav_params.yaml` and set `db_path` to your generated `.npz` 
 ```yaml
 visual_estimator_node:
   ros__parameters:
-    db_path: "/home/username/path/to/your/features_db_sift_2000.npz"
-    algorithm: "SIFT"  # Options: SIFT, ORB, AKAZE, BRISK, HOG
-    db_path: "~/frames_2026-01-17_17-22-56/features_db_sift_2000.npz"
+    db_path: "~/frames_<timestamp>/map_sift.npz"  # the feature method is read from the map
 ```
 
 You can also tune flight speed, target coordinates (`target_pos_x`, `target_pos_y`), and PID control gains in this file.
@@ -113,7 +119,7 @@ This single command automatically:
 3. Sequentially launches the vision and control nodes after simulation stabilization:
    - **`nav_gcs`**: Ground station GUI displaying real-time tracking, odometry, and feature matches.
    - **`optical_flow`**: Computes visual velocity and altitude-scaled motion vectors.
-   - **`visual_estimator`**: Matches incoming camera frames against your visual database to estimate ENU position and manages breadcrumb backtracking.
+   - **`visual_estimator`**: Matches incoming camera frames against the map database around the predicted position and publishes the ENU position.
    - **`base_controller`**: Translates position and velocity commands into MAVLink RC Overrides (`ALT_HOLD` mode).
    - **`navigation_runner`**: Autonomous planner that tracks waypoints toward the target position.
    - **`perf_metrics_logger`**: Synchronously records visual localization errors against Gazebo ground-truth odometry to `perf_metrics_<timestamp>.csv`.
@@ -137,7 +143,7 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 ```
 
 - ArduPilot is loaded with `config/arducopter_params/gnss_denied_fake_gps.param` (`GPS1_TYPE=14`, EKF position from GPS, no GPS velocity, arming checks and EKF failsafe enabled).
-- **`visual_estimator`** starts localized at the known take-off point (`init_at_home`), so the pose is valid on the ground and the first database fix is gated like any other. Backtracking is disabled.
+- **`visual_estimator`** starts localized at the known take-off point (`init_at_home`), so the pose is valid on the ground and the first database fix is gated like any other.
 - **`gps_input_bridge`** converts `/visual_gps` to `/mavros/gps_input/gps_input`. If the estimate goes stale the stream stops and ArduPilot's failsafes apply.
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
 - `base_controller` and `navigation_runner` are not used. Add `gui:=false` to run without the Gazebo GUI and ground station window.
@@ -148,7 +154,7 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 
 During autonomous navigation, performance data is automatically logged to CSV files in your active workspace directory:
 - **`perf_metrics_<timestamp>.csv`**: Records timestamp, algorithm, match duration (ms), status (`MATCH` / `OUTLIER`), estimated coordinates, ground-truth coordinates (`/odometry`), and instantaneous Euclidean error (m).
-- **`visual_log_<algorithm>_<timestamp>.csv`**: Generated by `visual_estimator`, recording timestamps, matched coordinates, and navigator states (`NORMAL`, `BRAKING`, `BACKTRACKING`).
+- **`visual_log_<algorithm>_<timestamp>.csv`**: Generated by `visual_estimator`, recording accepted map fixes with their inlier count and estimated uncertainty.
 
 To generate an automatic benchmarking report (Mean FPS, processing latency, match success rate, Position RMSE, Max error):
 
@@ -179,8 +185,8 @@ gnss_denied_nav/
 ├── docs/
 │   └── simulation_setup.md        # Environment setup and dependencies guide
 ├── gnss_denied_nav/
-│   ├── build_features/            # Offline database generator scripts
-│   ├── *_detect_match.py          # Feature extraction & matching implementations
+│   ├── localization/              # ROS-free localization core (features, matching, geometry, map database)
+│   ├── tools/                     # build_map_db, eval_localization
 │   ├── base_controller.py         # RC override PID flight controller
 │   ├── follow_local_wp.py         # Parametric survey mission generator
 │   ├── nav_gcs.py                 # Ground control visualization GUI
