@@ -32,6 +32,14 @@ visual_estimator_node:
     search_radius_growth: 2.0   # m per second since the last fix
     max_search_radius: 150.0
 
+# --- Optical Flow (velocity between map fixes) ---
+visual_velocity_estimator:
+  ros__parameters:
+    camera_hfov: 2.0      # effective FOV (CameraZoomPlugin overrides the SDF's 1.41)
+    publish_rate: 10.0    # max processed frames per simulated second
+    lpf_alpha: 0.5        # low-pass on ENU velocity (1.0 = off)
+    min_altitude: 1.0
+
 # --- Navigation Runner (Planner) ---
 visual_navigation_planner:
   ros__parameters:
