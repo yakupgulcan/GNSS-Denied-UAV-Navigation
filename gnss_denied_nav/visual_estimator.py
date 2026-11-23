@@ -107,7 +107,7 @@ class VisualEstimatorNode(Node):
         self.current_y = 0.0
         self.current_vel_x = 0.0
         self.current_vel_y = 0.0
-        self.last_vel_time = time.time()
+        self.last_vel_time = None
         self.current_altitude = 0.0
 
         # --- Publishers & Subscriptions ---
@@ -144,10 +144,11 @@ class VisualEstimatorNode(Node):
         if self.mavros_state.mode == 'LAND':
             # No dead reckoning during landing (flow is unreliable near the ground).
             return
-        now = time.time()
-        dt = now - self.last_vel_time
-        self.last_vel_time = now
-        if dt > 1.0:
+        # Integrate over the image-stamp interval (simulated time), not wall time.
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        dt = stamp - self.last_vel_time if self.last_vel_time is not None else 0.0
+        self.last_vel_time = stamp
+        if dt > 1.0 or dt < 0.0:
             dt = 0.0
         self.current_vel_x = msg.twist.linear.x
         self.current_vel_y = msg.twist.linear.y
