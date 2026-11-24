@@ -47,6 +47,9 @@ visual_velocity_estimator:
     publish_rate: 10.0    # max processed frames per simulated second
     lpf_alpha: 0.5        # low-pass on ENU velocity (1.0 = off)
     min_altitude: 1.0
+    # Heading used to rotate the flow to ENU: 'map' = compass corrected by the
+    # absolute camera heading of the map fixes (independent of the EKF), 'compass'.
+    heading_source: "map"
 
 # --- Navigation Runner (Planner) ---
 visual_navigation_planner:

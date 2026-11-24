@@ -10,10 +10,20 @@ velocity), and the motion is scaled to meters by height / focal length.
 Time steps come from the image header stamps, so velocities are in meters
 per simulated second even when Gazebo runs slower than real time.
 
+Heading (heading_source):
+    map      compass + an offset tracked from the absolute camera heading of the
+             map fixes (/visual_nav/diagnostics). Default. The ENU velocity may
+             be fed to the ArduPilot EKF (GPS_INPUT); rotating it with the EKF's
+             own heading would close a loop in which an EKF yaw error makes the
+             "measured" velocity agree with it, so the error grows (seen in
+             flight: -8 deg). The map heading is independent of the EKF.
+    compass  /mavros/global_position/compass_hdg only (EKF heading).
+
 Outputs (stamped with the image time):
     /visual_velocity_enu   (east, north) m/s
     /visual_velocity_body  (forward, left) m/s, ROS FLU convention
 """
+import json
 import math
 
 import cv2
@@ -24,7 +34,7 @@ from geometry_msgs.msg import TwistStamped
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float64
+from std_msgs.msg import Float64, String
 
 from gnss_denied_nav.localization.camera import CameraModel
 
@@ -109,16 +119,28 @@ class VisualVelocityNode(Node):
         # Low-pass filter on the ENU velocity (1.0 = no filtering).
         self.declare_parameter('lpf_alpha', 0.5)
         self.declare_parameter('min_altitude', 1.0)
+        self.declare_parameter('heading_source', 'map')    # 'map' or 'compass'
+        self.declare_parameter('heading_offset_gain', 0.05)  # per map fix (~2 s at 10 Hz)
+        self.declare_parameter('heading_min_inliers', 30)
+        self.declare_parameter('heading_max_jump_deg', 20.0)  # reject fixes this far off the offset
 
         self.hfov = float(self.get_parameter('camera_hfov').value)
         self.min_period = 1.0 / float(self.get_parameter('publish_rate').value)
         self.alpha = float(self.get_parameter('lpf_alpha').value)
         self.min_altitude = float(self.get_parameter('min_altitude').value)
+        self.heading_source = str(self.get_parameter('heading_source').value)
+        self.offset_gain = float(self.get_parameter('heading_offset_gain').value)
+        self.heading_min_inliers = int(self.get_parameter('heading_min_inliers').value)
+        self.heading_max_jump = float(self.get_parameter('heading_max_jump_deg').value)
+        if self.heading_source not in ('map', 'compass'):
+            raise ValueError(f"heading_source must be 'map' or 'compass', not {self.heading_source!r}")
 
         self.flow = None
         self.bridge = CvBridge()
         self.altitude = 0.0
-        self.heading = None
+        self.heading = None           # compass (EKF) heading, deg
+        self.heading_offset = None    # map heading - compass, deg
+        self.last_offset_log = 0.0
         self.last_stamp = None
         self.v_east = self.v_north = self.v_fwd = self.v_right = 0.0
 
@@ -128,16 +150,48 @@ class VisualVelocityNode(Node):
         self.create_subscription(Float64, '/mavros/global_position/compass_hdg',
                                  self.heading_callback, qos)
         self.create_subscription(Float64, '/mavros/global_position/rel_alt', self.alt_cb, qos)
+        if self.heading_source == 'map':
+            self.create_subscription(String, '/visual_nav/diagnostics', self.diagnostics_cb, 10)
         self.vel_pub = self.create_publisher(TwistStamped, '/visual_velocity_enu', 10)
         self.body_vel_pub = self.create_publisher(TwistStamped, '/visual_velocity_body', 10)
         self.get_logger().info(
-            f'Optical flow started (hfov {self.hfov:.2f} rad, alpha {self.alpha}).')
+            f'Optical flow started (hfov {self.hfov:.2f} rad, alpha {self.alpha}, '
+            f'heading {self.heading_source}).')
 
     def alt_cb(self, msg):
         self.altitude = msg.data
 
     def heading_callback(self, msg):
         self.heading = msg.data
+
+    def diagnostics_cb(self, msg):
+        """Track the offset between the map (camera) heading and the compass."""
+        try:
+            d = json.loads(msg.data)
+        except ValueError:
+            return
+        if (self.heading is None or 'fix_heading_deg' not in d
+                or d.get('inliers', 0) < self.heading_min_inliers):
+            return
+        sample = (d['fix_heading_deg'] - self.heading + 180.0) % 360.0 - 180.0
+        if self.heading_offset is None:
+            self.heading_offset = sample
+            self.get_logger().info(f'Heading offset initialised from the map: {sample:+.1f} deg')
+            return
+        diff = (sample - self.heading_offset + 180.0) % 360.0 - 180.0
+        if abs(diff) > self.heading_max_jump:
+            return
+        self.heading_offset += self.offset_gain * diff
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self.last_offset_log > 10.0:
+            self.last_offset_log = now
+            self.get_logger().info(f'Heading offset (map - compass): {self.heading_offset:+.1f} deg')
+
+    def flow_heading(self):
+        """Heading used to rotate the flow into ENU."""
+        if self.heading_source == 'map' and self.heading_offset is not None:
+            return (self.heading + self.heading_offset) % 360.0
+        return self.heading
 
     def image_callback(self, msg):
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
@@ -160,7 +214,7 @@ class VisualVelocityNode(Node):
             self.flow.reset()
             self.v_east = self.v_north = self.v_fwd = self.v_right = 0.0
         else:
-            vel = self.flow.update(gray, stamp, self.altitude, self.heading)
+            vel = self.flow.update(gray, stamp, self.altitude, self.flow_heading())
             if vel is None:
                 return
             a = self.alpha
