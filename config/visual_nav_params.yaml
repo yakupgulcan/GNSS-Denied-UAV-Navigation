@@ -50,6 +50,12 @@ visual_velocity_estimator:
     # Heading used to rotate the flow to ENU: 'map' = compass corrected by the
     # absolute camera heading of the map fixes (independent of the EKF), 'compass'.
     heading_source: "map"
+    # Remove apparent ground motion from residual camera rotation (gimbal does
+    # not cancel all body rotation). Coefficients fitted from flight data:
+    # flow error = k * body rate * height. ~1 for a body-fixed camera.
+    rate_compensation: true
+    rate_comp_roll: 0.061
+    rate_comp_pitch: -0.059
 
 # --- Navigation Runner (Planner) ---
 visual_navigation_planner:

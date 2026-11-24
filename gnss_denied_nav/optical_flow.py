@@ -19,12 +19,25 @@ Heading (heading_source):
              flight: -8 deg). The map heading is independent of the EKF.
     compass  /mavros/global_position/compass_hdg only (EKF heading).
 
+Rotation compensation (rate_compensation):
+    A camera rotation shifts the image like a translation would: height x
+    angular rate of apparent ground speed. The gimbal removes most of the body
+    rotation but not all; in flight the residual flow error was
+    0.061 x roll rate x height (lateral) and -0.059 x pitch rate x height
+    (forward), and with the flow fed to the EKF it drove a 0.38 Hz roll
+    oscillation. Body rates come from the autopilot IMU (/mavros/imu/data,
+    FLU); ATTITUDE is requested at attitude_rate_hz. The coefficients are a
+    property of the camera mount: ~1 for a body-fixed camera, ~0 for a perfect
+    gimbal.
+
 Outputs (stamped with the image time):
     /visual_velocity_enu   (east, north) m/s
     /visual_velocity_body  (forward, left) m/s, ROS FLU convention
 """
 import json
 import math
+import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -33,7 +46,8 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import TwistStamped
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image
+from mavros_msgs.srv import MessageInterval
+from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Float64, String
 
 from gnss_denied_nav.localization.camera import CameraModel
@@ -101,10 +115,14 @@ class FlowOdometry:
         gsd = self.camera.gsd(height)
         fwd = -(v - cy) * gsd / dt
         right = (u - cx) * gsd / dt
-        h = math.radians(heading_deg)
-        east = fwd * math.sin(h) + right * math.cos(h)
-        north = fwd * math.cos(h) - right * math.sin(h)
+        east, north = body_to_enu(fwd, right, heading_deg)
         return east, north, fwd, right
+
+
+def body_to_enu(fwd, right, heading_deg):
+    """(forward, right) velocity in the camera/body frame -> (east, north)."""
+    h = math.radians(heading_deg)
+    return fwd * math.sin(h) + right * math.cos(h), fwd * math.cos(h) - right * math.sin(h)
 
 
 class VisualVelocityNode(Node):
@@ -123,6 +141,11 @@ class VisualVelocityNode(Node):
         self.declare_parameter('heading_offset_gain', 0.05)  # per map fix (~2 s at 10 Hz)
         self.declare_parameter('heading_min_inliers', 30)
         self.declare_parameter('heading_max_jump_deg', 20.0)  # reject fixes this far off the offset
+        # Remove the apparent ground motion caused by residual camera rotation.
+        self.declare_parameter('rate_compensation', True)
+        self.declare_parameter('rate_comp_roll', 0.061)     # lateral error / (roll rate * height)
+        self.declare_parameter('rate_comp_pitch', -0.059)   # forward error / (pitch rate * height)
+        self.declare_parameter('attitude_rate_hz', 50.0)    # requested ATTITUDE stream rate
 
         self.hfov = float(self.get_parameter('camera_hfov').value)
         self.min_period = 1.0 / float(self.get_parameter('publish_rate').value)
@@ -132,6 +155,10 @@ class VisualVelocityNode(Node):
         self.offset_gain = float(self.get_parameter('heading_offset_gain').value)
         self.heading_min_inliers = int(self.get_parameter('heading_min_inliers').value)
         self.heading_max_jump = float(self.get_parameter('heading_max_jump_deg').value)
+        self.rate_compensation = bool(self.get_parameter('rate_compensation').value)
+        self.k_roll = float(self.get_parameter('rate_comp_roll').value)
+        self.k_pitch = float(self.get_parameter('rate_comp_pitch').value)
+        self.attitude_rate = float(self.get_parameter('attitude_rate_hz').value)
         if self.heading_source not in ('map', 'compass'):
             raise ValueError(f"heading_source must be 'map' or 'compass', not {self.heading_source!r}")
 
@@ -142,6 +169,7 @@ class VisualVelocityNode(Node):
         self.heading_offset = None    # map heading - compass, deg
         self.last_offset_log = 0.0
         self.last_stamp = None
+        self.gyro = deque(maxlen=200)  # (wall time, roll rate, pitch rate) rad/s, FLU
         self.v_east = self.v_north = self.v_fwd = self.v_right = 0.0
 
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -152,11 +180,17 @@ class VisualVelocityNode(Node):
         self.create_subscription(Float64, '/mavros/global_position/rel_alt', self.alt_cb, qos)
         if self.heading_source == 'map':
             self.create_subscription(String, '/visual_nav/diagnostics', self.diagnostics_cb, 10)
+        if self.rate_compensation:
+            self.create_subscription(Imu, '/mavros/imu/data', self.imu_cb, qos)
+            self.interval_cli = self.create_client(MessageInterval, '/mavros/set_message_interval')
+            self.interval_set = False
+            self.interval_timer = self.create_timer(2.0, self.request_attitude_rate)
         self.vel_pub = self.create_publisher(TwistStamped, '/visual_velocity_enu', 10)
         self.body_vel_pub = self.create_publisher(TwistStamped, '/visual_velocity_body', 10)
         self.get_logger().info(
             f'Optical flow started (hfov {self.hfov:.2f} rad, alpha {self.alpha}, '
-            f'heading {self.heading_source}).')
+            f'heading {self.heading_source}, rate compensation '
+            f'{"roll %.3f pitch %.3f" % (self.k_roll, self.k_pitch) if self.rate_compensation else "off"}).')
 
     def alt_cb(self, msg):
         self.altitude = msg.data
@@ -187,6 +221,38 @@ class VisualVelocityNode(Node):
             self.last_offset_log = now
             self.get_logger().info(f'Heading offset (map - compass): {self.heading_offset:+.1f} deg')
 
+    def imu_cb(self, msg):
+        self.gyro.append((time.time(), msg.angular_velocity.x, msg.angular_velocity.y))
+
+    def request_attitude_rate(self):
+        """Ask the autopilot for ATTITUDE (id 30) fast enough to follow the body rates."""
+        if self.interval_set:
+            self.interval_timer.cancel()
+            return
+        if not self.interval_cli.service_is_ready():
+            return
+        future = self.interval_cli.call_async(
+            MessageInterval.Request(message_id=30, message_rate=self.attitude_rate))
+
+        def done(fut):
+            try:
+                if fut.result().success:
+                    self.interval_set = True
+                    self.get_logger().info(f'ATTITUDE stream set to {self.attitude_rate:.0f} Hz.')
+            except Exception as e:
+                self.get_logger().warn(f'Could not set the ATTITUDE rate: {e}')
+        future.add_done_callback(done)
+
+    def body_rates(self, window=0.1):
+        """Mean (roll, pitch) rate over the last window seconds, or None."""
+        now = time.time()
+        recent = [(p, q) for t, p, q in self.gyro if now - t <= window]
+        if not recent and self.gyro and now - self.gyro[-1][0] <= 0.5:
+            recent = [self.gyro[-1][1:]]
+        if not recent:
+            return None
+        return float(np.mean([r[0] for r in recent])), float(np.mean([r[1] for r in recent]))
+
     def flow_heading(self):
         """Heading used to rotate the flow into ENU."""
         if self.heading_source == 'map' and self.heading_offset is not None:
@@ -214,9 +280,18 @@ class VisualVelocityNode(Node):
             self.flow.reset()
             self.v_east = self.v_north = self.v_fwd = self.v_right = 0.0
         else:
-            vel = self.flow.update(gray, stamp, self.altitude, self.flow_heading())
+            heading = self.flow_heading()
+            vel = self.flow.update(gray, stamp, self.altitude, heading)
             if vel is None:
                 return
+            fwd, right = vel[2], vel[3]
+            rates = self.body_rates() if self.rate_compensation else None
+            if rates is not None:
+                roll_rate, pitch_rate = rates
+                right += self.k_roll * roll_rate * self.altitude
+                fwd -= self.k_pitch * pitch_rate * self.altitude
+            east, north = body_to_enu(fwd, right, heading)
+            vel = (east, north, fwd, right)
             a = self.alpha
             self.v_east = a * vel[0] + (1 - a) * self.v_east
             self.v_north = a * vel[1] + (1 - a) * self.v_north
