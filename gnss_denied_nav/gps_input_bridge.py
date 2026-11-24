@@ -55,6 +55,9 @@ class GpsInputBridge(Node):
         self.declare_parameter('speed_accuracy', 0.3)       # m/s, measured flow error ~0.2
         self.declare_parameter('velocity_stale_timeout', 0.5)
         self.declare_parameter('low_altitude', 5.0)         # flow is noisier below this (m)
+        # The EKF refuses to align on GPS while speed accuracy > 1.0 m/s and flags it
+        # bad above 1.5 m/s (AP_NavEKF3_VehicleStatus.cpp), so never report more.
+        self.declare_parameter('max_speed_accuracy', 0.8)
 
         rate = float(self.get_parameter('publish_rate').value)
         self.stale_timeout = float(self.get_parameter('stale_timeout').value)
@@ -67,6 +70,7 @@ class GpsInputBridge(Node):
         self.speed_accuracy = float(self.get_parameter('speed_accuracy').value)
         self.velocity_timeout = float(self.get_parameter('velocity_stale_timeout').value)
         self.low_altitude = float(self.get_parameter('low_altitude').value)
+        self.max_speed_accuracy = float(self.get_parameter('max_speed_accuracy').value)
 
         self.last_fix = None
         self.last_fix_time = 0.0
@@ -152,9 +156,13 @@ class GpsInputBridge(Node):
                        and now - self.velocity_time <= self.velocity_timeout)
         if velocity_ok:
             msg.ve, msg.vn = float(self.velocity[0]), float(self.velocity[1])
-            # Flow is noisier close to the ground: report a larger speed error there.
-            scale = max(1.0, self.low_altitude / max(self.rel_alt, 0.5))
-            msg.speed_accuracy = float(self.speed_accuracy * scale)
+            # Flow is noisier at low height: report a larger speed error there, capped
+            # below the EKF limits. On the ground (< 1 m) the flow node reports exactly
+            # zero, which is right for a vehicle standing still, so no inflation.
+            scale = 1.0
+            if 1.0 <= self.rel_alt < self.low_altitude:
+                scale = self.low_altitude / self.rel_alt
+            msg.speed_accuracy = float(min(self.speed_accuracy * scale, self.max_speed_accuracy))
         else:
             msg.ignore_flags |= IGNORE_VEL_HORIZ | IGNORE_SPEED_ACCURACY
         msg.time_week = week
