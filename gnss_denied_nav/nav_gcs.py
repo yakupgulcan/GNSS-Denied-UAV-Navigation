@@ -431,11 +431,10 @@ class MainWindow(QMainWindow):
             ('total', '#e53935'), ('along', '#1e88e5'), ('cross', '#43a047')])
         self.plot_speed = TimePlot('Horizontal speed', 'm/s', [
             ('truth', '#43a047'), ('EKF', '#8e24aa'), ('flow', '#fb8c00')])
-        self.plot_match = TimePlot('Matcher', 'inliers / ms', [
-            ('inliers', '#1e88e5'), ('latency ms', '#e53935')])
+        self.plot_latency = TimePlot('Localization latency', 'ms', [('latency', '#e53935')])
         grid.addWidget(self.plot_err, 0, 0)
         grid.addWidget(self.plot_speed, 0, 1)
-        grid.addWidget(self.plot_match, 0, 2)
+        grid.addWidget(self.plot_latency, 0, 2)
         grid_w = QWidget()
         grid_w.setLayout(grid)
         right.addWidget(grid_w, stretch=1)
@@ -540,9 +539,9 @@ class MainWindow(QMainWindow):
             self.plot_err.append(t, {'total': err, 'along': along, 'cross': cross})
             self.plot_speed.append(t, {'truth': norm(s['gt_vel']), 'EKF': norm(s['ekf_vel']),
                                        'flow': norm(s['flow_vel'])})
-            self.plot_match.append(t, {'inliers': d.get('inliers'), 'latency ms': d.get('ms_total')})
+            self.plot_latency.append(t, {'latency': d.get('ms_total')})
         window = self.sp_window.value()
-        for plot in (self.plot_err, self.plot_speed, self.plot_match):
+        for plot in (self.plot_err, self.plot_speed, self.plot_latency):
             plot.redraw(window)
 
     def update_status(self, s, d):
