@@ -374,12 +374,12 @@ class MainWindow(QMainWindow):
         # Right: map + time plots
         right = QVBoxLayout()
         controls = QHBoxLayout()
+        # Follow keeps the vehicle centered at the current zoom level; dragging
+        # the map turns it off, the mouse wheel zooms around the vehicle.
         self.chk_follow = QCheckBox('Follow vehicle')
         self.chk_follow.setChecked(True)
-        self.sp_view = QSpinBox()
-        self.sp_view.setRange(20, 3000)
-        self.sp_view.setValue(120)
-        self.sp_view.setSuffix(' m')
+        btn_fit = QPushButton('Fit all')
+        btn_fit.clicked.connect(self.fit_map)
         self.sp_window = QSpinBox()
         self.sp_window.setRange(10, 1800)
         self.sp_window.setValue(120)
@@ -387,8 +387,7 @@ class MainWindow(QMainWindow):
         btn_clear = QPushButton('Clear paths')
         btn_clear.clicked.connect(self.clear_paths)
         controls.addWidget(self.chk_follow)
-        controls.addWidget(QLabel('View half-width'))
-        controls.addWidget(self.sp_view)
+        controls.addWidget(btn_fit)
         controls.addWidget(QLabel('Plot window'))
         controls.addWidget(self.sp_window)
         controls.addWidget(btn_clear)
@@ -399,8 +398,9 @@ class MainWindow(QMainWindow):
         self.map_plot.setAspectLocked(True)
         self.map_plot.showGrid(x=True, y=True, alpha=0.3)
         self.map_plot.addLegend(offset=(5, 5))
-        self.map_frames_item = pg.ScatterPlotItem(size=5, pen=None, brush=pg.mkBrush(150, 150, 150, 120),
-                                                  name='Map frames')
+        self.map_frames_item = pg.ScatterPlotItem(size=7, pen=pg.mkPen('#006064', width=1),
+                                                  brush=pg.mkBrush(0, 229, 255, 170),
+                                                  name='Map frames (survey images)')
         self.map_plot.addItem(self.map_frames_item)
         tx, ty = self.node.target
         self.map_plot.plot([0, tx], [0, ty], pen=pg.mkPen('#1e88e5', width=1, style=Qt.DashLine),
@@ -421,6 +421,9 @@ class MainWindow(QMainWindow):
         }
         for item in (self.ref_item, self.fix_item, self.radius_item, *self.vehicle_items.values()):
             self.map_plot.addItem(item)
+        self.map_plot.setRange(xRange=(-120, 120), yRange=(-120, 120), padding=0)
+        self.map_width = None
+        self.map_plot.getViewBox().sigRangeChangedManually.connect(self.on_map_manual_range)
         right.addWidget(self.map_plot, stretch=3)
 
         grid = QGridLayout()
@@ -428,16 +431,14 @@ class MainWindow(QMainWindow):
             ('total', '#e53935'), ('along', '#1e88e5'), ('cross', '#43a047')])
         self.plot_speed = TimePlot('Horizontal speed', 'm/s', [
             ('truth', '#43a047'), ('EKF', '#8e24aa'), ('flow', '#fb8c00')])
-        self.plot_alt = TimePlot('Altitude', 'm', [('truth', '#43a047'), ('EKF', '#8e24aa')])
         self.plot_match = TimePlot('Matcher', 'inliers / ms', [
             ('inliers', '#1e88e5'), ('latency ms', '#e53935')])
         grid.addWidget(self.plot_err, 0, 0)
         grid.addWidget(self.plot_speed, 0, 1)
-        grid.addWidget(self.plot_alt, 1, 0)
-        grid.addWidget(self.plot_match, 1, 1)
+        grid.addWidget(self.plot_match, 0, 2)
         grid_w = QWidget()
         grid_w.setLayout(grid)
-        right.addWidget(grid_w, stretch=2)
+        right.addWidget(grid_w, stretch=1)
         outer.addLayout(right, stretch=1)
         return tab
 
@@ -539,10 +540,9 @@ class MainWindow(QMainWindow):
             self.plot_err.append(t, {'total': err, 'along': along, 'cross': cross})
             self.plot_speed.append(t, {'truth': norm(s['gt_vel']), 'EKF': norm(s['ekf_vel']),
                                        'flow': norm(s['flow_vel'])})
-            self.plot_alt.append(t, {'truth': gt[2] if gt else None, 'EKF': s['ekf_alt']})
             self.plot_match.append(t, {'inliers': d.get('inliers'), 'latency ms': d.get('ms_total')})
         window = self.sp_window.value()
-        for plot in (self.plot_err, self.plot_speed, self.plot_alt, self.plot_match):
+        for plot in (self.plot_err, self.plot_speed, self.plot_match):
             plot.redraw(window)
 
     def update_status(self, s, d):
@@ -621,9 +621,33 @@ class MainWindow(QMainWindow):
 
         center = s['gt'] or s['est']
         if self.chk_follow.isChecked() and center is not None:
-            h = self.sp_view.value()
-            self.map_plot.setRange(xRange=(center[0] - h, center[0] + h),
-                                   yRange=(center[1] - h, center[1] + h), padding=0)
+            # Re-center on the vehicle but keep whatever zoom the user chose.
+            (x0, x1), (y0, y1) = self.map_plot.getViewBox().viewRange()
+            hx, hy = (x1 - x0) / 2.0, (y1 - y0) / 2.0
+            self.map_plot.setRange(xRange=(center[0] - hx, center[0] + hx),
+                                   yRange=(center[1] - hy, center[1] + hy), padding=0)
+            self.map_width = 2.0 * hx
+
+    def on_map_manual_range(self, *_):
+        """Mouse interaction on the map: a drag (same width) stops following, a zoom does not."""
+        (x0, x1), _ = self.map_plot.getViewBox().viewRange()
+        width = x1 - x0
+        if self.map_width is not None and abs(width - self.map_width) <= 1e-6 * max(width, 1.0):
+            self.chk_follow.setChecked(False)
+        self.map_width = width
+
+    def fit_map(self):
+        """Show the whole map and every path; stops following."""
+        self.chk_follow.setChecked(False)
+        pts = [np.array(p) for p in self.paths.values() if p]
+        mf = self.node.snapshot()['map_frames']
+        if mf is not None and len(mf):
+            pts.append(mf)
+        pts.append(np.array([[0.0, 0.0], self.node.target]))
+        allp = np.vstack(pts)
+        self.map_plot.setRange(xRange=(allp[:, 0].min(), allp[:, 0].max()),
+                               yRange=(allp[:, 1].min(), allp[:, 1].max()), padding=0.05)
+        self.map_width = None
 
     @Slot(np.ndarray)
     def update_cam_display(self, cv_img):
