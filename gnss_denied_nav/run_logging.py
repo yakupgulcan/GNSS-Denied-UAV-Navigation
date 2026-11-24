@@ -35,6 +35,7 @@ BAG_TOPICS = [
     '/mavros/state', '/mavros/global_position/global', '/mavros/global_position/rel_alt',
     '/mavros/global_position/compass_hdg', '/mavros/local_position/pose',
     '/mavros/local_position/velocity_local', '/mavros/gps_input/gps_input',
+    '/mavros/imu/data',
     '/mavros/setpoint_raw/global', '/mavros/setpoint_raw/target_global',
 ]
 

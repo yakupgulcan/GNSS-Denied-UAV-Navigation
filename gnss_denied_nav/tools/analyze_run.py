@@ -72,8 +72,11 @@ def analyze(run_dir):
                   for _, m in od])
     p -= p[0]                                   # home = first pose (on the ground)
     # True heading (compass convention) from the odometry orientation.
+    quats = [m.pose.pose.orientation for _, m in od]
     yaw = np.unwrap([math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-                     for q in (m.pose.pose.orientation for _, m in od)])
+                     for q in quats])
+    roll = np.array([math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y))
+                     for q in quats])
     true_hdg = np.degrees(np.pi / 2 - yaw)
     to_sim = lambda w: np.interp(w, tw, ts)     # noqa: E731
 
@@ -114,6 +117,15 @@ def analyze(run_dir):
     # --- speed smoothness (truth): 0.5 s speeds in cruise
     sc = speed[cruise]
     acc = np.abs(np.gradient(speed, 0.1))[cruise]
+    groll = np.degrees(np.interp(grid, ts, roll))[cruise]
+    # Lateral (cross-track) velocity relative to the 10 s mean direction of travel.
+    k10 = 100
+    mvx = np.convolve(vx, np.ones(k10) / k10, mode='same')
+    mvy = np.convolve(vy, np.ones(k10) / k10, mode='same')
+    mn = np.maximum(np.hypot(mvx, mvy), 1e-6)
+    lat = (-vx * mvy + vy * mvx) / mn
+    s['truth_attitude'] = {'roll_std_deg': float(groll.std()) if len(groll) else float('nan'),
+                           'lateral_velocity_rms': float(np.sqrt(np.mean(lat[cruise] ** 2)))}
     s['truth_speed'] = {'median': pct(sc, 50), 'std': float(sc.std()), 'p5': pct(sc, 5),
                         'p95': pct(sc, 95), 'max': float(sc.max()) if len(sc) else float('nan'),
                         'accel_rms': float(np.sqrt(np.mean(acc ** 2))) if len(acc) else float('nan')}
@@ -212,6 +224,8 @@ ROWS = [
     ('truth_speed.std', 'truth speed std (m/s)'), ('truth_speed.p5', 'truth speed p5'),
     ('truth_speed.p95', 'truth speed p95'), ('truth_speed.max', 'truth speed max'),
     ('truth_speed.accel_rms', 'truth accel RMS (m/s2)'),
+    ('truth_attitude.roll_std_deg', 'truth roll std (deg)'),
+    ('truth_attitude.lateral_velocity_rms', 'truth lateral vel RMS'),
     ('ekf_velocity_error.rms', 'EKF velocity error RMS'),
     ('ekf_position_error.along_std', 'EKF along std (m)'),
     ('ekf_position_error.total_median', 'EKF error median'),
