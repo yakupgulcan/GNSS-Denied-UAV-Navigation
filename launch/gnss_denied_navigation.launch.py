@@ -10,6 +10,8 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+from gnss_denied_nav.run_logging import run_logging_actions
+
 
 def generate_launch_description():
     pkg_gnss_denied_nav = get_package_share_directory("gnss_denied_nav")
@@ -73,7 +75,8 @@ def generate_launch_description():
     visual_estimator = Node(
         package="gnss_denied_nav",
         executable="visual_estimator",
-        parameters=[LaunchConfiguration("params_file")],
+        parameters=[LaunchConfiguration("params_file"),
+                    {"run_dir": LaunchConfiguration("run_dir")}],
         output="screen",
     )
 
@@ -94,6 +97,7 @@ def generate_launch_description():
     perf_metrics_logger = Node(
         package="gnss_denied_nav",
         executable="perf_metrics_logger",
+        parameters=[{"run_dir": LaunchConfiguration("run_dir")}],
         output="screen",
         condition=IfCondition(LaunchConfiguration("enable_logger")),
     )
@@ -102,6 +106,8 @@ def generate_launch_description():
         params_file_arg,
         world_arg,
         enable_logger_arg,
+        # Run directory under log_dir; SITL/MAVProxy files land there too.
+        *run_logging_actions([scenario_params]),
         simulation,
 
         TimerAction(

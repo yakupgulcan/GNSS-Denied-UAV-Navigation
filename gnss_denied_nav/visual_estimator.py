@@ -15,7 +15,6 @@ import math
 import os
 import threading
 import time
-from datetime import datetime
 
 import rclpy
 import numpy as np
@@ -30,6 +29,7 @@ from sensor_msgs.msg import Image, NavSatFix
 from std_msgs.msg import Float64, String
 
 from gnss_denied_nav import geo
+from gnss_denied_nav.run_logging import resolve_run_dir
 from gnss_denied_nav.localization import (
     CameraModel, Localizer, LocalizerConfig, MapDatabase)
 
@@ -60,6 +60,8 @@ class VisualEstimatorNode(Node):
         # Start localized at the known take-off point (ENU origin) so the pose is
         # valid from the ground and the first database fix is gated like any other.
         self.declare_parameter('init_at_home', False)
+        # Directory for this run's logs (set by the launch file; default ~/gnss_nav_logs/<time>).
+        self.declare_parameter('run_dir', '')
 
         db_path = os.path.expanduser(self.get_parameter('db_path').value)
         self.start_lat = float(self.get_parameter('start_lat').value)
@@ -95,8 +97,8 @@ class VisualEstimatorNode(Node):
             f'Map ready: {db.method}, {len(db)} frames, {len(db.kpts)} features.')
 
         # CSV log
-        ct = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        self.csv_file = open(f'visual_log_{self.algorithm}_{ct}.csv', 'w', newline='')
+        run_dir = resolve_run_dir(self.get_parameter('run_dir').value)
+        self.csv_file = open(os.path.join(run_dir, 'visual_log.csv'), 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'inliers', 'sigma_m'])
 
