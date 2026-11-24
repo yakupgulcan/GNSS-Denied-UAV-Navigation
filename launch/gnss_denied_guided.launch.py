@@ -109,12 +109,26 @@ def generate_launch_description():
         output="screen",
     )
 
-    guided_mission = Node(
-        package="gnss_denied_nav",
-        executable="guided_mission",
-        parameters=[LaunchConfiguration("params_file")],
-        output="screen",
-    )
+    target_x_arg = DeclareLaunchArgument(
+        "target_x", default_value="",
+        description="Target east (m); empty = target_pos_x from params_file")
+    target_y_arg = DeclareLaunchArgument(
+        "target_y", default_value="",
+        description="Target north (m), e.g. 1000 for short test flights; empty = target_pos_y from params_file")
+
+    def make_guided_mission(context):
+        # Launch arguments override the target in params_file only when given.
+        overrides = {}
+        for arg, param in (("target_x", "target_pos_x"), ("target_y", "target_pos_y")):
+            value = LaunchConfiguration(arg).perform(context).strip()
+            if value:
+                overrides[param] = float(value)
+        return [Node(
+            package="gnss_denied_nav",
+            executable="guided_mission",
+            parameters=[LaunchConfiguration("params_file"), overrides],
+            output="screen",
+        )]
 
     perf_metrics_logger = Node(
         package="gnss_denied_nav",
@@ -131,6 +145,8 @@ def generate_launch_description():
         gui_arg,
         # Run directory under log_dir; SITL/MAVProxy files land there too.
         gps_velocity_arg,
+        target_x_arg,
+        target_y_arg,
         OpaqueFunction(function=select_scenario_params),
         *run_logging_actions(),
         simulation,
@@ -153,6 +169,6 @@ def generate_launch_description():
         # The mission node waits for the EKF position itself before arming.
         TimerAction(
             period=72.0,
-            actions=[guided_mission],
+            actions=[OpaqueFunction(function=make_guided_mission)],
         ),
     ])
