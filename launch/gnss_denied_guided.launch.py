@@ -35,7 +35,7 @@ def generate_launch_description():
     gui_arg = DeclareLaunchArgument(
         "gui",
         default_value="true",
-        description="Start the Gazebo GUI and the ground station window",
+        description="Start the Gazebo GUI",
     )
 
     enable_logger_arg = DeclareLaunchArgument(
@@ -68,14 +68,6 @@ def generate_launch_description():
             "world": LaunchConfiguration("world"),
             "gui": LaunchConfiguration("gui"),
         }.items(),
-    )
-
-    nav_gcs = Node(
-        package="gnss_denied_nav",
-        executable="nav_gcs",
-        parameters=[LaunchConfiguration("params_file")],
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("gui")),
     )
 
     optical_flow = Node(
@@ -124,11 +116,6 @@ def generate_launch_description():
         enable_logger_arg,
         gui_arg,
         simulation,
-
-        TimerAction(
-            period=60.0,
-            actions=[nav_gcs],
-        ),
 
         TimerAction(
             period=63.0,

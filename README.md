@@ -33,7 +33,7 @@ The package provides automated, single-command launch workflows for both mapping
 | Launch File | Purpose | Key Nodes Launched |
 | :--- | :--- | :--- |
 | **`gnss_available_data_collection.launch.py`** | Records survey camera frames + GPS telemetry to build the visual database. | Gazebo, ArduPilot SITL (`gnss_available.param`), MAVROS, `save_frames`, `follow_local_wp` |
-| **`gnss_denied_navigation.launch.py`** | Executes autonomous vision-based flight in a GPS-denied environment. | Gazebo, ArduPilot SITL (`gnss_denied.param`), MAVROS, `nav_gcs`, `optical_flow`, `visual_estimator`, `base_controller`, `navigation_runner` |
+| **`gnss_denied_navigation.launch.py`** | Executes autonomous vision-based flight in a GPS-denied environment. | Gazebo, ArduPilot SITL (`gnss_denied.param`), MAVROS, `optical_flow`, `visual_estimator`, `base_controller`, `navigation_runner` |
 | **`simulation.launch.py`** | Base simulation bringup. | Gazebo Harmonic server & GUI, ArduPilot SITL (`iris_custom`), MAVROS |
 
 ---
@@ -117,7 +117,6 @@ This single command automatically:
 1. Starts the Gazebo simulation and loads ArduPilot with GPS disabled and EKF failsafes bypassed (`config/arducopter_params/gnss_denied.param`).
 2. Starts MAVROS with the proper FCU bridge configuration.
 3. Sequentially launches the vision and control nodes after simulation stabilization:
-   - **`nav_gcs`**: Ground station GUI displaying real-time tracking, odometry, and feature matches.
    - **`optical_flow`**: Computes visual velocity and altitude-scaled motion vectors.
    - **`visual_estimator`**: Matches incoming camera frames against the map database around the predicted position and publishes the ENU position.
    - **`base_controller`**: Translates position and velocity commands into MAVLink RC Overrides (`ALT_HOLD` mode).
@@ -146,7 +145,20 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 - **`visual_estimator`** starts localized at the known take-off point (`init_at_home`), so the pose is valid on the ground and the first database fix is gated like any other.
 - **`gps_input_bridge`** converts `/visual_gps` to `/mavros/gps_input/gps_input`. If the estimate goes stale the stream stops and ArduPilot's failsafes apply.
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
-- `base_controller` and `navigation_runner` are not used. Add `gui:=false` to run without the Gazebo GUI and ground station window.
+- `base_controller` and `navigation_runner` are not used. Add `gui:=false` to run without the Gazebo GUI.
+
+---
+
+### Ground Control Station (optional)
+
+The ground station is not started by the launch files, so runs that only collect logs stay lightweight. Start it by hand in another terminal while a navigation launch is running:
+
+```bash
+ros2 run gnss_denied_nav nav_gcs --ros-args \
+    --params-file $(ros2 pkg prefix gnss_denied_nav)/share/gnss_denied_nav/config/visual_nav_params.yaml
+```
+
+The Navigation tab compares the visual estimate with Gazebo ground truth (`/odometry`): map frames, true / estimated / EKF paths, the matched map frame and search radius, localization status, errors, speeds, altitude and matcher statistics. It needs `pyqtgraph` (`pip install --user pyqtgraph`).
 
 ---
 

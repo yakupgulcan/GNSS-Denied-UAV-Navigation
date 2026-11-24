@@ -63,13 +63,6 @@ def generate_launch_description():
         }.items(),
     )
 
-    nav_gcs = Node(
-        package="gnss_denied_nav",
-        executable="nav_gcs",
-        parameters=[LaunchConfiguration("params_file")],
-        output="screen",
-    )
-
     optical_flow = Node(
         package="gnss_denied_nav",
         executable="optical_flow",
@@ -110,11 +103,6 @@ def generate_launch_description():
         world_arg,
         enable_logger_arg,
         simulation,
-
-        TimerAction(
-            period=60.0,
-            actions=[nav_gcs],
-        ),
 
         TimerAction(
             period=63.0,
