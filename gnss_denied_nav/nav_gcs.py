@@ -27,8 +27,11 @@ import threading
 import time
 from collections import deque
 
-os.environ.setdefault('QT_API', 'pyside6')
+# pyqtgraph ignores QT_API and picks the first binding it finds (PyQt6/PyQt5 are
+# also installed here); pin it to PySide6 and import PySide6 before pyqtgraph.
+os.environ['PYQTGRAPH_QT_LIB'] = 'PySide6'
 
+import PySide6  # noqa: E402,F401
 import numpy as np  # noqa: E402
 import pyqtgraph as pg  # noqa: E402
 import rclpy  # noqa: E402
