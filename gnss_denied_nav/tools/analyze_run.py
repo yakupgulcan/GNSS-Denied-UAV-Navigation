@@ -30,7 +30,7 @@ LAT0, LON0 = -35.3766471, 149.1652375
 
 TOPICS = ['/odometry', '/visual_nav/diagnostics', '/visual_gps', '/visual_velocity_enu',
           '/mavros/local_position/velocity_local', '/mavros/global_position/global',
-          '/mavros/gps_input/gps_input']
+          '/mavros/gps_input/gps_input', '/mavros/global_position/compass_hdg']
 
 
 def read_bag(bag_dir):
@@ -71,6 +71,10 @@ def analyze(run_dir):
     p = np.array([[m.pose.pose.position.x, m.pose.pose.position.y, m.pose.pose.position.z]
                   for _, m in od])
     p -= p[0]                                   # home = first pose (on the ground)
+    # True heading (compass convention) from the odometry orientation.
+    yaw = np.unwrap([math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+                     for q in (m.pose.pose.orientation for _, m in od)])
+    true_hdg = np.degrees(np.pi / 2 - yaw)
     to_sim = lambda w: np.interp(w, tw, ts)     # noqa: E731
 
     grid = np.arange(ts[0], ts[-1], 0.1)
@@ -140,6 +144,19 @@ def analyze(run_dir):
         c = in_cruise(t)
         sp = np.hypot(v[c, 0], v[c, 1]) - np.interp(t[c], grid, speed)
         s['flow_speed_error'] = {'mean': float(sp.mean()), 'std': float(sp.std())}
+        ee = v[c, 0] - np.interp(t[c], grid, vx)
+        en = v[c, 1] - np.interp(t[c], grid, vy)
+        s['flow_velocity_error'] = {'east_mean': float(ee.mean()), 'east_std': float(ee.std()),
+                                    'north_mean': float(en.mean()), 'north_std': float(en.std())}
+
+    # --- EKF heading (compass_hdg) vs true heading
+    hd = msgs['/mavros/global_position/compass_hdg']
+    if hd:
+        t = to_sim(np.array([w for w, _ in hd]))
+        c = in_cruise(t)
+        err = (np.array([m.data for _, m in hd])[c] - np.interp(t[c], ts, true_hdg) + 180.0) % 360.0 - 180.0
+        s['ekf_heading_error'] = {'mean': float(err.mean()), 'std': float(err.std()),
+                                  'max_abs': float(np.abs(err).max()) if len(err) else float('nan')}
 
     # --- raw map fixes at capture time (diagnostics, image-stamped)
     diags = [json.loads(m.data) for _, m in msgs['/visual_nav/diagnostics']]
@@ -204,6 +221,10 @@ ROWS = [
     ('raw_fix_error.total_median', 'raw fix error median'),
     ('raw_fix_error.jumps_gt_1m_per_min', 'fix jumps >1 m /min'),
     ('flow_speed_error.mean', 'flow speed error mean'), ('flow_speed_error.std', 'flow speed error std'),
+    ('flow_velocity_error.east_mean', 'flow east error mean'),
+    ('flow_velocity_error.north_mean', 'flow north error mean'),
+    ('ekf_heading_error.mean', 'EKF heading error mean (deg)'),
+    ('ekf_heading_error.max_abs', 'EKF heading error max (deg)'),
     ('localization.rate_hz_sim', 'localization rate (Hz)'),
     ('localization.latency_ms_median', 'latency median (ms)'),
     ('gps_input.velocity_share', 'GPS_INPUT with velocity'), ('real_time_factor', 'real-time factor'),
