@@ -25,8 +25,10 @@ from datetime import datetime
 
 DEFAULT_LOG_DIR = '~/gnss_nav_logs'
 
+# /clock is left out on purpose: at ~800 Hz it was ~90% of the bag, and every
+# recorded message carries its own (simulation) header stamp anyway.
 BAG_TOPICS = [
-    '/clock', '/odometry',
+    '/odometry',
     '/visual_gps', '/visual_pose_enu', '/visual_perf_metrics',
     '/visual_nav/diagnostics', '/visual_nav/map_frames',
     '/visual_velocity_enu', '/visual_velocity_body',
