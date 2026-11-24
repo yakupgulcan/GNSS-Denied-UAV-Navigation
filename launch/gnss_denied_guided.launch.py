@@ -73,6 +73,7 @@ def generate_launch_description():
     nav_gcs = Node(
         package="gnss_denied_nav",
         executable="nav_gcs",
+        parameters=[LaunchConfiguration("params_file")],
         output="screen",
         condition=IfCondition(LaunchConfiguration("gui")),
     )

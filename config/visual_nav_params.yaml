@@ -32,6 +32,14 @@ visual_estimator_node:
     search_radius_growth: 2.0   # m per second since the last fix
     max_search_radius: 150.0
 
+# --- Ground Control Station (nav_gcs) ---
+visual_gui_node:
+  ros__parameters:
+    start_lat: -35.3766471
+    start_lon: 149.1652375
+    target_pos_x: 0.0
+    target_pos_y: 2900.0
+
 # --- Optical Flow (velocity between map fixes) ---
 visual_velocity_estimator:
   ros__parameters:
