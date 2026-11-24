@@ -6,15 +6,16 @@ from std_msgs.msg import String
 import csv
 import time
 import os
-from datetime import datetime
+from gnss_denied_nav.run_logging import resolve_run_dir
 
 class AdvancedLogger(Node):
     def __init__(self):
         super().__init__('advanced_benchmark_logger')
         
-        # File setup
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.filename = f'perf_metrics_{ts}.csv'
+        # File setup: one CSV per run, in the run directory set by the launch file.
+        self.declare_parameter('run_dir', '')
+        run_dir = resolve_run_dir(self.get_parameter('run_dir').value)
+        self.filename = os.path.join(run_dir, 'perf_metrics.csv')
         self.csv_file = open(self.filename, 'w', newline='')
         self.writer = csv.writer(self.csv_file)
 

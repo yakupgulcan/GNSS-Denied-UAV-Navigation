@@ -10,24 +10,26 @@ Localization itself lives in gnss_denied_nav.localization (ROS-free); this
 node only feeds it frames, gates and blends its fixes, and publishes poses.
 """
 import csv
+import json
 import math
 import os
 import threading
 import time
-from datetime import datetime
 
 import rclpy
+import numpy as np
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PoseStamped, TwistStamped
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped, TwistStamped
 from mavros_msgs.msg import State
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, NavSatFix
 from std_msgs.msg import Float64, String
 
 from gnss_denied_nav import geo
+from gnss_denied_nav.run_logging import resolve_run_dir
 from gnss_denied_nav.localization import (
     CameraModel, Localizer, LocalizerConfig, MapDatabase)
 
@@ -58,6 +60,8 @@ class VisualEstimatorNode(Node):
         # Start localized at the known take-off point (ENU origin) so the pose is
         # valid from the ground and the first database fix is gated like any other.
         self.declare_parameter('init_at_home', False)
+        # Directory for this run's logs (set by the launch file; default ~/gnss_nav_logs/<time>).
+        self.declare_parameter('run_dir', '')
 
         db_path = os.path.expanduser(self.get_parameter('db_path').value)
         self.start_lat = float(self.get_parameter('start_lat').value)
@@ -93,8 +97,8 @@ class VisualEstimatorNode(Node):
             f'Map ready: {db.method}, {len(db)} frames, {len(db.kpts)} features.')
 
         # CSV log
-        ct = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        self.csv_file = open(f'visual_log_{self.algorithm}_{ct}.csv', 'w', newline='')
+        run_dir = resolve_run_dir(self.get_parameter('run_dir').value)
+        self.csv_file = open(os.path.join(run_dir, 'visual_log.csv'), 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'inliers', 'sigma_m'])
 
@@ -116,6 +120,13 @@ class VisualEstimatorNode(Node):
         self.pub_metrics = self.create_publisher(String, '/visual_perf_metrics', 10)
         self.pose_pub = self.create_publisher(PoseStamped, '/visual_pose_enu', 10)
         self.gps_publisher = self.create_publisher(NavSatFix, '/visual_gps', qos_sensor)
+        # Per-frame localization details (JSON) for the GCS, loggers and debugging.
+        self.diag_pub = self.create_publisher(String, '/visual_nav/diagnostics', 10)
+        # Map frame positions, latched so late subscribers (GCS) still get them.
+        qos_latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                                 reliability=ReliabilityPolicy.RELIABLE)
+        self.map_pub = self.create_publisher(PoseArray, '/visual_nav/map_frames', qos_latched)
+        self.publish_map_frames()
 
         cbg = self.parallel_cb_group
         self.create_subscription(Image, '/camera/image', self.image_callback,
@@ -172,13 +183,13 @@ class VisualEstimatorNode(Node):
 
         try:
             gray = self.bridge.imgmsg_to_cv2(msg, 'mono8')
-            self.process_frame(gray)
+            self.process_frame(gray, msg.header.stamp)
         except Exception as e:
             self.get_logger().error(f'Image callback error: {e}')
         finally:
             self.frame_lock.release()
 
-    def process_frame(self, gray):
+    def process_frame(self, gray, stamp):
         now = time.time()
         since_fix = now - self.last_db_success_time
 
@@ -225,6 +236,53 @@ class VisualEstimatorNode(Node):
         # Format: "ALGORITHM,STATUS,DURATION(ms),EST_X,EST_Y"
         self.pub_metrics.publish(String(
             data=f"{self.algorithm},{status},{info['ms_total']:.2f},{est_x:.2f},{est_y:.2f}"))
+        self.publish_diagnostics(stamp, status, fix, info, radius)
+
+    def publish_diagnostics(self, stamp, status, fix, info, radius):
+        db = self.localizer.db
+        nearest = float(np.min(np.hypot(db.enu[:, 0] - self.current_x,
+                                        db.enu[:, 1] - self.current_y)))
+        diag = {
+            'stamp': stamp.sec + stamp.nanosec * 1e-9,
+            'algorithm': self.algorithm,
+            'status': status,
+            'localized': self.is_localized,
+            'x': self.current_x,
+            'y': self.current_y,
+            'since_fix_s': time.time() - self.last_db_success_time,
+            'search_radius_m': radius,
+            'nearest_map_frame_m': nearest,
+            'n_features': info['n_features'],
+            'n_candidates': len(info['candidates']),
+            'rejects': info['rejects'],
+            'ms_extract': info['ms_extract'],
+            'ms_retrieve': info['ms_retrieve'],
+            'ms_match': info['ms_match'],
+            'ms_total': info['ms_total'],
+        }
+        if fix is not None:
+            ref = int(fix.ref_index)
+            diag.update({
+                'fix_x': fix.x, 'fix_y': fix.y, 'fix_heading_deg': fix.heading_deg,
+                'sigma_m': fix.sigma_m, 'inliers': fix.n_inliers,
+                'inlier_ratio': fix.inlier_ratio, 'scale': fix.scale,
+                'ref_index': ref, 'ref_x': float(db.enu[ref, 0]), 'ref_y': float(db.enu[ref, 1]),
+                'ref_file': str(db.filenames[ref]),
+            })
+        self.diag_pub.publish(String(data=json.dumps(diag)))
+
+    def publish_map_frames(self):
+        msg = PoseArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        db = self.localizer.db
+        for (x, y), hdg, alt in zip(db.enu, db.heading, db.rel_alt):
+            p = Pose()
+            p.position.x, p.position.y, p.position.z = float(x), float(y), float(alt)
+            yaw = math.radians(90.0 - hdg)  # compass -> ENU yaw
+            p.orientation.z, p.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
+            msg.poses.append(p)
+        self.map_pub.publish(msg)
 
     def publish_current_pose(self):
         stamp = self.get_clock().now().to_msg()

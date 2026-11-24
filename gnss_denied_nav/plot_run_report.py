@@ -15,7 +15,7 @@ produces a set of PNG figures plus a text summary:
     summary.txt
 
 Usage:
-    python3 plot_run_report.py                       # newest perf_metrics_*.csv in ~ or .
+    python3 plot_run_report.py                       # newest run in ~/gnss_nav_logs (or old perf_metrics_*.csv in ~ or .)
     python3 plot_run_report.py perf_metrics_X.csv    # a specific run
     python3 plot_run_report.py run.csv --out report_dir --segment 100
 """
@@ -55,7 +55,8 @@ plt.rcParams.update({
 
 
 def find_latest_csv():
-    candidates = glob.glob(os.path.expanduser("~/perf_metrics_*.csv")) + glob.glob("perf_metrics_*.csv")
+    candidates = (glob.glob(os.path.expanduser("~/gnss_nav_logs/*/perf_metrics.csv"))
+                  + glob.glob(os.path.expanduser("~/perf_metrics_*.csv")) + glob.glob("perf_metrics_*.csv"))
     candidates = [c for c in candidates if os.path.getsize(c) > 1000]
     if not candidates:
         return None
@@ -267,8 +268,8 @@ def summarize(df, matches, csv_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Plot a GNSS-denied navigation run report.")
-    parser.add_argument("csv", nargs="?", help="perf_metrics_*.csv (default: newest in ~ or .)")
-    parser.add_argument("--out", help="output directory (default: <csv name>_report next to the CSV)")
+    parser.add_argument("csv", nargs="?", help="perf_metrics CSV (default: newest run in ~/gnss_nav_logs)")
+    parser.add_argument("--out", help="output directory (default: report/ in the run directory)")
     parser.add_argument("--segment", type=float, default=100.0, help="route segment length in m for the match-rate chart")
     args = parser.parse_args()
 
@@ -281,7 +282,12 @@ def main():
     if matches.empty:
         sys.exit(f"{csv_path} contains no accepted fixes (MATCH rows); nothing to plot.")
 
-    out_dir = args.out or os.path.splitext(csv_path)[0] + "_report"
+    if args.out:
+        out_dir = args.out
+    elif os.path.basename(csv_path) == "perf_metrics.csv":   # run directory layout
+        out_dir = os.path.join(os.path.dirname(csv_path), "report")
+    else:
+        out_dir = os.path.splitext(csv_path)[0] + "_report"
     os.makedirs(out_dir, exist_ok=True)
 
     plot_route(df, matches, out_dir)

@@ -10,6 +10,8 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+from gnss_denied_nav.run_logging import run_logging_actions
+
 
 def generate_launch_description():
     pkg_gnss_denied_nav = get_package_share_directory("gnss_denied_nav")
@@ -35,7 +37,7 @@ def generate_launch_description():
     gui_arg = DeclareLaunchArgument(
         "gui",
         default_value="true",
-        description="Start the Gazebo GUI and the ground station window",
+        description="Start the Gazebo GUI",
     )
 
     enable_logger_arg = DeclareLaunchArgument(
@@ -70,13 +72,6 @@ def generate_launch_description():
         }.items(),
     )
 
-    nav_gcs = Node(
-        package="gnss_denied_nav",
-        executable="nav_gcs",
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("gui")),
-    )
-
     optical_flow = Node(
         package="gnss_denied_nav",
         executable="optical_flow",
@@ -91,7 +86,7 @@ def generate_launch_description():
             LaunchConfiguration("params_file"),
             # The autopilot needs a valid position from the ground: start at
             # the known home position.
-            {"init_at_home": True},
+            {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir")},
         ],
         output="screen",
     )
@@ -113,6 +108,7 @@ def generate_launch_description():
     perf_metrics_logger = Node(
         package="gnss_denied_nav",
         executable="perf_metrics_logger",
+        parameters=[{"run_dir": LaunchConfiguration("run_dir")}],
         output="screen",
         condition=IfCondition(LaunchConfiguration("enable_logger")),
     )
@@ -122,12 +118,9 @@ def generate_launch_description():
         world_arg,
         enable_logger_arg,
         gui_arg,
+        # Run directory under log_dir; SITL/MAVProxy files land there too.
+        *run_logging_actions([scenario_params]),
         simulation,
-
-        TimerAction(
-            period=60.0,
-            actions=[nav_gcs],
-        ),
 
         TimerAction(
             period=63.0,
