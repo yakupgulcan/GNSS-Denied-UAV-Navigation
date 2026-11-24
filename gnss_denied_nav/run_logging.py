@@ -54,6 +54,8 @@ def run_logging_actions(files_to_copy=()):
     Declares the launch arguments log_dir, record_bag and bag_images, creates
     the run directory, changes into it, sets the launch configuration
     'run_dir' (pass it to logging nodes) and optionally starts rosbag.
+    The params_file and scenario_params launch configurations, when set,
+    are copied into the run directory with files_to_copy.
     Place the returned actions before the simulation include.
     """
     from launch.actions import (DeclareLaunchArgument, ExecuteProcess, OpaqueFunction,
@@ -67,7 +69,7 @@ def run_logging_actions(files_to_copy=()):
         os.makedirs(run_dir, exist_ok=True)
         os.chdir(run_dir)
 
-        for path in [*files_to_copy, cfg.get('params_file', '')]:
+        for path in [*files_to_copy, cfg.get('params_file', ''), cfg.get('scenario_params', '')]:
             if path and os.path.isfile(path):
                 shutil.copy(path, run_dir)
         with open(os.path.join(run_dir, 'run_meta.json'), 'w') as f:

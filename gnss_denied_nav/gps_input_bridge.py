@@ -9,9 +9,12 @@ can be used (GUIDED / AUTO / LOITER) instead of RC overrides.
 Input : /visual_gps (sensor_msgs/NavSatFix) from the visual estimator
 Output: /mavros/gps_input/gps_input (mavros_msgs/GPSINPUT)
 
-Only position is sent. Velocity is flagged as "ignore", so the EKF must be
-configured with EK3_SRC1_VELXY=0. If the estimate goes stale the stream
-stops on purpose: ArduPilot then sees a GPS loss and its failsafes apply.
+Position is always sent. With send_velocity=true the optical-flow velocity
+(/visual_velocity_enu) is sent as GPS velocity too, and the EKF must use it
+(EK3_SRC1_VELXY=3, gnss_denied_fake_gps_vel.param); otherwise velocity is
+flagged "ignore" and the EKF needs EK3_SRC1_VELXY=0. A stale velocity is
+flagged "ignore" for that message. If the position estimate goes stale the
+stream stops on purpose: ArduPilot then sees a GPS loss and its failsafes apply.
 """
 import time
 
@@ -19,6 +22,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
+from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float64
 from mavros_msgs.msg import GPSINPUT
@@ -46,6 +50,11 @@ class GpsInputBridge(Node):
         self.declare_parameter('vert_accuracy', 3.0)
         self.declare_parameter('hdop', 1.0)
         self.declare_parameter('satellites_visible', 10)
+        # Optical-flow velocity as GPS velocity (needs EK3_SRC1_VELXY=3).
+        self.declare_parameter('send_velocity', False)
+        self.declare_parameter('speed_accuracy', 0.3)       # m/s, measured flow error ~0.2
+        self.declare_parameter('velocity_stale_timeout', 0.5)
+        self.declare_parameter('low_altitude', 5.0)         # flow is noisier below this (m)
 
         rate = float(self.get_parameter('publish_rate').value)
         self.stale_timeout = float(self.get_parameter('stale_timeout').value)
@@ -54,16 +63,24 @@ class GpsInputBridge(Node):
         self.vert_accuracy = float(self.get_parameter('vert_accuracy').value)
         self.hdop = float(self.get_parameter('hdop').value)
         self.sats = int(self.get_parameter('satellites_visible').value)
+        self.send_velocity = bool(self.get_parameter('send_velocity').value)
+        self.speed_accuracy = float(self.get_parameter('speed_accuracy').value)
+        self.velocity_timeout = float(self.get_parameter('velocity_stale_timeout').value)
+        self.low_altitude = float(self.get_parameter('low_altitude').value)
 
         self.last_fix = None
         self.last_fix_time = 0.0
         self.rel_alt = 0.0
         self.was_stale = True
+        self.velocity = None          # (east, north) m/s
+        self.velocity_time = 0.0
 
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(NavSatFix, '/visual_gps', self.fix_cb, qos)
         self.create_subscription(Float64, '/mavros/global_position/rel_alt', self.alt_cb, qos)
+        if self.send_velocity:
+            self.create_subscription(TwistStamped, '/visual_velocity_enu', self.velocity_cb, qos)
         self.pub = self.create_publisher(GPSINPUT, '/mavros/gps_input/gps_input', 10)
 
         self.create_timer(1.0 / rate, self.publish_gps_input)
@@ -76,7 +93,8 @@ class GpsInputBridge(Node):
         self.throttle_raised = False
         self.throttle_timer = self.create_timer(2.0, self.raise_mavros_throttle)
         self.get_logger().info(
-            f"GPS_INPUT bridge ready ({rate:.0f} Hz, hAcc {self.horiz_accuracy:.1f} m).")
+            f"GPS_INPUT bridge ready ({rate:.0f} Hz, hAcc {self.horiz_accuracy:.1f} m, "
+            f"velocity {'ON (sAcc %.2f m/s)' % self.speed_accuracy if self.send_velocity else 'OFF'}).")
 
     def raise_mavros_throttle(self):
         if self.throttle_raised:
@@ -107,6 +125,10 @@ class GpsInputBridge(Node):
     def alt_cb(self, msg: Float64):
         self.rel_alt = msg.data
 
+    def velocity_cb(self, msg: TwistStamped):
+        self.velocity = (msg.twist.linear.x, msg.twist.linear.y)
+        self.velocity_time = time.time()
+
     def publish_gps_input(self):
         now = time.time()
         stale = self.last_fix is None or (now - self.last_fix_time) > self.stale_timeout
@@ -125,7 +147,16 @@ class GpsInputBridge(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.gps_id = 0
         msg.fix_type = GPSINPUT.GPS_FIX_TYPE_3D_FIX
-        msg.ignore_flags = IGNORE_VEL_HORIZ | IGNORE_VEL_VERT | IGNORE_SPEED_ACCURACY
+        msg.ignore_flags = IGNORE_VEL_VERT
+        velocity_ok = (self.send_velocity and self.velocity is not None
+                       and now - self.velocity_time <= self.velocity_timeout)
+        if velocity_ok:
+            msg.ve, msg.vn = float(self.velocity[0]), float(self.velocity[1])
+            # Flow is noisier close to the ground: report a larger speed error there.
+            scale = max(1.0, self.low_altitude / max(self.rel_alt, 0.5))
+            msg.speed_accuracy = float(self.speed_accuracy * scale)
+        else:
+            msg.ignore_flags |= IGNORE_VEL_HORIZ | IGNORE_SPEED_ACCURACY
         msg.time_week = week
         msg.time_week_ms = week_ms
         msg.lat = int(round(self.last_fix.latitude * 1e7))

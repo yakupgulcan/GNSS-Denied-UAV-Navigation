@@ -3,11 +3,13 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction,
+                            SetLaunchConfiguration, TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 from gnss_denied_nav.run_logging import run_logging_actions
@@ -46,12 +48,18 @@ def generate_launch_description():
         description="Automatically record visual performance metrics and ground-truth errors to CSV",
     )
 
-    scenario_params = os.path.join(
-        pkg_gnss_denied_nav,
-        "config",
-        "arducopter_params",
-        "gnss_denied_fake_gps.param",
+    gps_velocity_arg = DeclareLaunchArgument(
+        "gps_velocity",
+        default_value="false",
+        description="Send optical-flow velocity in GPS_INPUT and let the EKF use it "
+                    "(gnss_denied_fake_gps_vel.param, EK3_SRC1_VELXY=3)",
     )
+
+    def select_scenario_params(context):
+        use_velocity = LaunchConfiguration("gps_velocity").perform(context).lower() == "true"
+        name = "gnss_denied_fake_gps_vel.param" if use_velocity else "gnss_denied_fake_gps.param"
+        path = os.path.join(pkg_gnss_denied_nav, "config", "arducopter_params", name)
+        return [SetLaunchConfiguration("scenario_params", path)]
 
     simulation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -66,7 +74,7 @@ def generate_launch_description():
             ]
         ),
         launch_arguments={
-            "scenario_params": scenario_params,
+            "scenario_params": LaunchConfiguration("scenario_params"),
             "world": LaunchConfiguration("world"),
             "gui": LaunchConfiguration("gui"),
         }.items(),
@@ -94,7 +102,10 @@ def generate_launch_description():
     gps_input_bridge = Node(
         package="gnss_denied_nav",
         executable="gps_input_bridge",
-        parameters=[LaunchConfiguration("params_file")],
+        parameters=[
+            LaunchConfiguration("params_file"),
+            {"send_velocity": ParameterValue(LaunchConfiguration("gps_velocity"), value_type=bool)},
+        ],
         output="screen",
     )
 
@@ -119,7 +130,9 @@ def generate_launch_description():
         enable_logger_arg,
         gui_arg,
         # Run directory under log_dir; SITL/MAVProxy files land there too.
-        *run_logging_actions([scenario_params]),
+        gps_velocity_arg,
+        OpaqueFunction(function=select_scenario_params),
+        *run_logging_actions(),
         simulation,
 
         TimerAction(
