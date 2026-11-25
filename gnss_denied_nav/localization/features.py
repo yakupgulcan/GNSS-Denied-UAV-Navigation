@@ -74,8 +74,15 @@ def _superpoint(name, **params):
     return SuperPointExtractor(**params)
 
 
+def _eloftr(name, **params):
+    # Lazy import: transformers is only required for Efficient LoFTR.
+    from gnss_denied_nav.localization.eloftr import ImageExtractor
+    return ImageExtractor(**params)
+
+
 EXTRACTORS = {name: OpenCVExtractor for name in OpenCVExtractor.DEFAULTS}
 EXTRACTORS['SUPERPOINT'] = _superpoint
+EXTRACTORS['ELOFTR'] = _eloftr
 
 
 def create_extractor(name, **params):
