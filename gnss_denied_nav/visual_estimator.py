@@ -95,6 +95,10 @@ class VisualEstimatorNode(Node):
             accept_inliers=int(self.get_parameter('accept_inliers').value) or None,
             global_retrieval=not self.init_at_home)
         self.localizer = Localizer(db, camera, config)
+        if db.image_based and not self.init_at_home:
+            self.get_logger().error(
+                f'{db.method} maps have no descriptors for global retrieval: without '
+                'init_at_home there is no first fix. Use init_at_home (GUIDED launch).')
         self.algorithm = db.method
         self.get_logger().info(
             f'Map ready: {db.method}, {len(db)} frames, {len(db.kpts)} features.')

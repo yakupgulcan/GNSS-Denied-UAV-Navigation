@@ -67,8 +67,9 @@ class Localizer:
         # Query features must be extracted exactly like the map's.
         self.extractor = create_extractor(db.method, **db.params)
         self.matcher = create_matcher(self.extractor, ratio=self.cfg.match_ratio)
+        # Global retrieval votes with descriptors; image-based maps have none.
         self.retriever = (VotingRetriever(db, self.extractor.binary)
-                          if self.cfg.global_retrieval else None)
+                          if self.cfg.global_retrieval and not db.image_based else None)
 
     def localize(self, gray, prior=None, radius=None, exclude=(), heading=None):
         """Localize one grayscale image.

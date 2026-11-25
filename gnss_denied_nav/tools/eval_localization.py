@@ -76,6 +76,9 @@ def main(argv=None):
     loc = Localizer(db, CameraModel(w, h, args.hfov),
                     LocalizerConfig(max_candidates=args.candidates, accept_inliers=args.accept_inliers,
                                     global_retrieval=args.mode == 'global'))
+    if args.mode == 'global' and db.image_based:
+        print(f'{db.method} is image-based: no descriptors for global retrieval; use --mode prior')
+        return 1
     rng = np.random.default_rng(args.seed)
     print(f'{db.method} map: {len(db)} frames | {len(entries)} queries from {qdir} | '
           f'mode={args.mode}{" (leave-one-out)" if leave_one_out else ""}')

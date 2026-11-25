@@ -9,11 +9,14 @@ class Features:
     """Local features of one image.
 
     Keypoints are pixel coordinates in the original (un-resized) image.
+    Detector-free matchers (Efficient LoFTR) work on the image itself: their
+    Features have no keypoints and carry the grayscale image instead.
     """
 
     kpts: np.ndarray            # (N, 2) float32
     desc: np.ndarray            # (N, D) float32 or uint8
     image_size: tuple           # (width, height)
+    image: np.ndarray = None    # (H, W) uint8, image-based methods only
 
     def __len__(self):
         return len(self.kpts)
