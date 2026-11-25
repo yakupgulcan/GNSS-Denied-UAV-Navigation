@@ -6,8 +6,8 @@ This guide details the setup and execution of the simulation architecture, which
 
 ## 1. System Components
 
-#### ArduPilot SITL 
-ArduPilot is an open-source flight control softwar. SITL allows us to work with ArduPilot without any special hardware. It receives simulated sensor data from Gazebo and computes the drone's behavior before deploying the code to a physical flight controller.
+#### ArduPilot SITL
+ArduPilot is an open-source flight control software. SITL allows us to work with ArduPilot without any special hardware. It receives simulated sensor data from Gazebo and computes the drone's behavior before deploying the code to a physical flight controller.
 
 #### ROS 2 (Robot Operating System)
 ROS 2 provides a robust framework for developing robot applications. It manages the communication between different software nodes using a publisher-subscriber and service-client architecture.
@@ -22,7 +22,7 @@ Gazebo is a robust 3D physics simulator. It hosts the simulation world, drone mo
 
 ## 2. Installation Steps
 
->**Prerequisite:** A machine running **Ubuntu 22.04 LTS**.
+> **Prerequisite:** A machine running **Ubuntu 22.04 LTS**.
 
 ### 2.1 ROS 2 Humble Installation
 Install the `ros-humble-desktop` package by following the official documentation:
@@ -47,17 +47,17 @@ Follow these two official guides in order:
 * [ArduPilot ROS 2 Guide](https://ardupilot.org/dev/docs/ros2.html)
 * [ArduPilot ROS 2 SITL with Gazebo](https://ardupilot.org/dev/docs/ros2-sitl.html)
 
-*Note: Choose ArduPilot 4.5 branch when prompted during the setup.*
+*Note: this project is developed against ArduPilot `master` (ArduCopter 4.7.0-dev). The `ardupilot.repos` file used by the guides checks out `master` by default.*
 
 **4. Source the Workspace (`.bashrc`)**
-To avoid sourcing files manualy in every new terminal, add the following lines to the end of your `~/.bashrc` file:
+To avoid sourcing files manually in every new terminal, add the following lines to the end of your `~/.bashrc` file:
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
-``` 
+```
 *(Change `ros2_ws` if you named your workspace differently.)*
 
->**Troubleshooting:** If the `colcon build` step freezes due to RAM limitations (16 GB is sometimes insufficient for parallel building), consider increasing your system swap space to 8GB.
+> **Troubleshooting:** If the `colcon build` step freezes due to RAM limitations (16 GB is sometimes insufficient for parallel building), consider increasing your system swap space to 8 GB.
 
 ### 2.3 Gazebo Harmonic Installation
 Install Gazebo Harmonic following the [ArduPilot Gazebo Installation Guide](https://ardupilot.org/dev/docs/ros2-gazebo.html).
@@ -66,16 +66,16 @@ To load custom 3D models into Gazebo, you must add your models directory to the 
 ```bash
 export GZ_VERSION=harmonic
 export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:/home/username/models
-``` 
-*(Replace `username` with your actual Linux user name)*
+```
+*(Replace `username` with your actual Linux user name.)*
 
-You can also add this repository’s model path to GZ_SIM_RESOURCE_PATH, or alternatively copy the models from this repository into your existing models directory.
+The `gnss_denied_nav` models, Python packages and other project-specific steps are in the [README](../README.md#installation).
 
 ### 2.4 MAVROS Installation
 MAVROS should be built from source for ROS 2 compatibility.
+
 ```bash
 sudo apt install -y python3-vcstool python3-rosinstall-generator python3-osrf-pycommon
-
 cd ~/ros2_ws
 mkdir -p src
 
@@ -94,12 +94,12 @@ sudo ./src/mavros/mavros/scripts/install_geographiclib_datasets.sh
 
 # Build MAVROS
 colcon build
-
 source install/setup.bash
 ```
 
 ### 2.5 Mission Planner (Optional GUI)
 Mission Planner is a highly comprehensive Ground Control Station (GCS) for ArduPilot. It allows visual waypoint creation, parameter tuning, and flight monitoring.
+
 Because it's a Windows application, it runs on Ubuntu using `mono`:
 * [Mission Planner Linux Installation Guide](https://ardupilot.org/planner/docs/mission-planner-installation.html)
 
@@ -119,8 +119,10 @@ This launches the Gazebo simulation environment containing a runway and an Iris 
 ### Step 2: Launch MAVROS
 In a second terminal, establish the bridge between ROS 2 and ArduPilot:
 ```bash
-ros2 launch mavros apm.launch fcu_url:=udp://127.0.0.1:14550@14555
+ros2 launch mavros apm.launch fcu_url:=udp://127.0.0.1:14550@
 ```
+The URL format is `udp://<bind_host>:<bind_port>@<remote_host>:<remote_port>`. With the remote part empty, MAVROS listens on port 14550 and learns the SITL address from the first packet. Do not write only a port after `@` (for example `@14555`): MAVROS reads it as a host name, the first send fails with `sendto: Invalid argument` and the link is closed.
+
 *(If the UDP connection fails, SITL might be exposing a TCP port instead. Try `fcu_url:=tcp://127.0.0.1:5760`)*
 
 ### Step 3: Verify Connection
@@ -136,3 +138,4 @@ If you installed Mission Planner, launch it using:
 mono MissionPlanner.exe
 ```
 Select `AUTO` or the correct TCP/UDP port in the top-right corner, and click "Connect". You will see the drone's position on the map.
+
