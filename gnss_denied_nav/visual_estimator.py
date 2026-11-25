@@ -53,6 +53,8 @@ class VisualEstimatorNode(Node):
         self.declare_parameter('min_altitude', 15.0)
         # Map frames matched per camera frame, nearest to the predicted position.
         self.declare_parameter('max_candidates', 3)
+        # Stop at the first candidate (nearest first) whose fix has this many inliers; 0 = try all.
+        self.declare_parameter('accept_inliers', 0)
         # Search radius around the predicted position; grows with time since the last fix.
         self.declare_parameter('search_radius', 40.0)
         self.declare_parameter('search_radius_growth', 2.0)   # m per second without a fix
@@ -90,6 +92,7 @@ class VisualEstimatorNode(Node):
         # The global index is only needed for a first fix without a prior.
         config = LocalizerConfig(
             max_candidates=int(self.get_parameter('max_candidates').value),
+            accept_inliers=int(self.get_parameter('accept_inliers').value) or None,
             global_retrieval=not self.init_at_home)
         self.localizer = Localizer(db, camera, config)
         self.algorithm = db.method
@@ -113,6 +116,10 @@ class VisualEstimatorNode(Node):
         self.current_vel_y = 0.0
         self.last_vel_time = None
         self.current_altitude = 0.0
+        # Autopilot compass heading: only a coarse prior for the localizer (turning
+        # the query image for SuperPoint, rejecting fixes with a wrong heading).
+        self.compass_heading = None
+        self.compass_time = 0.0
 
         # --- Publishers & Subscriptions ---
         qos_sensor = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -137,6 +144,8 @@ class VisualEstimatorNode(Node):
                                  qos_profile=qos_sensor, callback_group=cbg)
         self.create_subscription(Float64, '/mavros/global_position/rel_alt', self.alt_cb,
                                  qos_sensor, callback_group=cbg)
+        self.create_subscription(Float64, '/mavros/global_position/compass_hdg', self.compass_cb,
+                                 qos_sensor, callback_group=cbg)
 
         self.bridge = CvBridge()
 
@@ -147,6 +156,10 @@ class VisualEstimatorNode(Node):
 
     def alt_cb(self, msg):
         self.current_altitude = msg.data
+
+    def compass_cb(self, msg):
+        self.compass_heading = msg.data
+        self.compass_time = time.time()
 
     def state_cb(self, msg):
         self.mavros_state = msg
@@ -199,7 +212,8 @@ class VisualEstimatorNode(Node):
             radius = min(self.search_radius + self.search_radius_growth * since_fix,
                          self.max_search_radius)
 
-        fix, info = self.localizer.localize(gray, prior, radius)
+        heading = self.compass_heading if now - self.compass_time < 2.0 else None
+        fix, info = self.localizer.localize(gray, prior, radius, heading=heading)
 
         status, est_x, est_y = 'NO_MATCH', 0.0, 0.0
         if fix is not None and not self.is_localized:
@@ -255,6 +269,7 @@ class VisualEstimatorNode(Node):
             'n_features': info['n_features'],
             'n_candidates': len(info['candidates']),
             'rejects': info['rejects'],
+            'rotations': info.get('rotations', []),
             'ms_extract': info['ms_extract'],
             'ms_retrieve': info['ms_retrieve'],
             'ms_match': info['ms_match'],

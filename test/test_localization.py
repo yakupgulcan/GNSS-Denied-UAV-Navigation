@@ -70,3 +70,47 @@ def test_database_roundtrip(world, tmp_path):
     np.testing.assert_array_equal(db2.offsets, db.offsets)
     np.testing.assert_allclose(db2.lat, db.lat)
     np.testing.assert_array_equal(db2.features(1).desc, db.features(1).desc)
+
+
+@pytest.mark.parametrize('k', [1, 2, 3])
+def test_unrotate_points_inverts_cv2_rotate(k):
+    import cv2
+    from gnss_denied_nav.localization.localizer import _ROTATE, unrotate_points
+    h, w = 48, 64
+    img = np.zeros((h, w), np.uint8)
+    pts = np.float32([[5, 7], [60, 40], [33, 2]])
+    for x, y in pts.astype(int):
+        img[y, x] = 255
+    turned = cv2.rotate(img, _ROTATE[k])
+    ys, xs = np.nonzero(turned)
+    back = unrotate_points(np.float32(np.column_stack([xs, ys])), k, w, h)
+    assert sorted(map(tuple, back.astype(int))) == sorted(map(tuple, pts.astype(int)))
+
+
+def test_rotation_steps():
+    from gnss_denied_nav.localization.localizer import rotation_steps
+    assert rotation_steps(0.0, 0.0) == 0
+    assert rotation_steps(92.0, 0.0) == 1
+    assert rotation_steps(178.0, 359.0) == 2
+    assert rotation_steps(0.0, 85.0) == 3
+
+
+def test_heading_gate_rejects_inconsistent_fix(world):
+    ground, db = world
+    loc = Localizer(db, CAM, LocalizerConfig(global_retrieval=False))
+    img = render(ground, 3.0, 8.0, 0.0)
+    res, _ = loc.localize(img, prior=(0.0, 10.0), radius=50.0, heading=5.0)
+    assert res is not None
+    res, info = loc.localize(img, prior=(0.0, 10.0), radius=50.0, heading=90.0)
+    assert res is None and info['rejects'].get('heading', 0) > 0
+
+
+def test_accept_inliers_stops_at_first_strong_fix(world):
+    ground, db = world
+    img = render(ground, 3.0, 8.0, 0.0)
+    all_ = Localizer(db, CAM, LocalizerConfig(global_retrieval=False))
+    res_all, info_all = all_.localize(img, prior=(0.0, 0.0), radius=50.0)
+    early = Localizer(db, CAM, LocalizerConfig(global_retrieval=False, accept_inliers=20))
+    res, info = early.localize(img, prior=(0.0, 0.0), radius=50.0)
+    assert info_all['n_tried'] == 3 and info['n_tried'] == 1
+    assert res is not None and math.hypot(res.x - 3.0, res.y - 8.0) < 0.5
