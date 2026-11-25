@@ -52,7 +52,7 @@ export ROS_LOCALHOST_ONLY=1
 
 ### Learned matchers (optional)
 
-Only needed for `--method SUPERPOINT` (SuperPoint features + LightGlue matching). The classical methods (SIFT, ORB, AKAZE, BRISK) work without these packages.
+Only needed for `--method SUPERPOINT` (SuperPoint features + LightGlue matching) and `--method ELOFTR` (Efficient LoFTR). The classical methods (SIFT, ORB, AKAZE, BRISK) work without these packages. Steps 1-3 are for SuperPoint + LightGlue, step 4 for Efficient LoFTR (which also needs PyTorch and kornia from steps 1-2).
 
 1. **PyTorch with CUDA** (a CPU build also works, but slowly). Pick the command for your driver on [pytorch.org](https://pytorch.org/get-started/locally/), for example:
    ```bash
@@ -77,7 +77,18 @@ Only needed for `--method SUPERPOINT` (SuperPoint features + LightGlue matching)
 
 3. **Weights** (SuperPoint ~5 MB, LightGlue ~45 MB) are downloaded automatically on first use into `~/.cache/torch/hub/checkpoints`.
 
-The SuperPoint weights are released by Magic Leap for non-commercial research use only; LightGlue is Apache-2.0.
+4. **Efficient LoFTR** uses the official code, for inference only. Do not install the repository's `requirements.txt` (old pinned training dependencies); three small packages are enough:
+   ```bash
+   pip install --user --no-deps einops==0.8.1 yacs==0.1.8 loguru==0.7.3
+   git clone https://github.com/zju3dv/EfficientLoFTR.git ~/third_party/EfficientLoFTR
+   git -C ~/third_party/EfficientLoFTR checkout 07e9c1401e71e9c556b1fda9d86d060af36ba176
+   mkdir -p ~/third_party/EfficientLoFTR/weights
+   ```
+   Download `eloftr_outdoor.ckpt` from the [pretrained model folder](https://drive.google.com/drive/folders/1GOw6iVqsB-f1vmG6rNmdCcgwfB4VZ7_Q?usp=sharing) linked in the Efficient LoFTR README into `~/third_party/EfficientLoFTR/weights/`. Set `ELOFTR_ROOT` if the repository is elsewhere. The weights are read with `torch.load(weights_only=True)`; PyTorch Lightning is not needed. The model runs in fp16 on CUDA (measured: same accuracy as fp32, ~1.7x faster).
+
+   The Hugging Face `transformers` port of Efficient LoFTR is not used: in transformers 5.2 its outputs pair the points wrongly when the images are rotated, and the sub-pixel refinement has no effect.
+
+The SuperPoint weights are released by Magic Leap for non-commercial research use only; LightGlue is Apache-2.0. The Efficient LoFTR code is under the authors' Project Registration License (free for academic use; organizations register for project use).
 
 ### Gimbal camera rate (optional)
 
@@ -138,7 +149,7 @@ Extract features from the recorded survey frames into a map database:
 ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
+This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
 
 Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
 
