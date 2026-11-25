@@ -7,7 +7,14 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Time
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+
+
+def _float(name):
+    # '1000' from the command line would arrive as an INTEGER parameter and the
+    # nodes declare these as DOUBLE, so force the type.
+    return ParameterValue(LaunchConfiguration(name), value_type=float)
 
 
 def generate_launch_description():
@@ -64,6 +71,11 @@ def generate_launch_description():
         default_value="1.5",
         description="Interval in seconds between captured frames",
     )
+    world_arg = DeclareLaunchArgument(
+        "world",
+        default_value="map_original.sdf",
+        description="Gazebo world file to survey (e.g. map_changed.sdf for a query set)",
+    )
     rtl_on_finish_arg = DeclareLaunchArgument(
         "rtl_on_finish",
         default_value="true",
@@ -91,6 +103,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "scenario_params": scenario_params,
+            "world": LaunchConfiguration("world"),
         }.items(),
     )
 
@@ -99,8 +112,8 @@ def generate_launch_description():
         executable="save_frames",
         output="screen",
         parameters=[{
-            "min_record_alt": LaunchConfiguration("min_record_alt"),
-            "save_interval": LaunchConfiguration("save_interval"),
+            "min_record_alt": _float("min_record_alt"),
+            "save_interval": _float("save_interval"),
         }],
     )
 
@@ -109,14 +122,14 @@ def generate_launch_description():
         executable="follow_local_wp",
         output="screen",
         parameters=[{
-            "target_x": LaunchConfiguration("target_x"),
-            "target_y": LaunchConfiguration("target_y"),
-            "corridor_width": LaunchConfiguration("corridor_width"),
-            "lane_spacing": LaunchConfiguration("lane_spacing"),
-            "flight_alt": LaunchConfiguration("flight_alt"),
+            "target_x": _float("target_x"),
+            "target_y": _float("target_y"),
+            "corridor_width": _float("corridor_width"),
+            "lane_spacing": _float("lane_spacing"),
+            "flight_alt": _float("flight_alt"),
             "auto_home": LaunchConfiguration("auto_home"),
-            "home_lat": LaunchConfiguration("home_lat"),
-            "home_lon": LaunchConfiguration("home_lon"),
+            "home_lat": _float("home_lat"),
+            "home_lon": _float("home_lon"),
             "rtl_on_finish": LaunchConfiguration("rtl_on_finish"),
         }],
     )
@@ -132,6 +145,7 @@ def generate_launch_description():
         home_lon_arg,
         min_record_alt_arg,
         save_interval_arg,
+        world_arg,
         rtl_on_finish_arg,
 
         simulation,
