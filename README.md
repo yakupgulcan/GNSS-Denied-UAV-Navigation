@@ -24,6 +24,36 @@ colcon build --packages-select gnss_denied_nav
 source install/setup.bash
 ```
 
+### Map meshes
+
+The Gazebo map meshes (`models/**/*.glb`) are too large for git. Download [models.zip](https://drive.google.com/file/d/1qNm7I9Xv2XJ14P4q1CX50A6-nq0itjjh/view?usp=sharing) (~430 MB) and extract it into the repository's `models/` directory, so that each mesh ends up as `models/<model>/meshes/<model>.glb` next to its `model.sdf`.
+
+Then add the models to the Gazebo resource path:
+```bash
+echo 'export GZ_SIM_RESOURCE_PATH=$GZ_SIM_RESOURCE_PATH:$HOME/ros2_ws/src/gnss_denied_nav/models' >> ~/.bashrc
+```
+
+### Python packages
+
+Installed in the user site. Keep `numpy` below 2 (ROS Humble `cv_bridge` is built against numpy 1.x):
+```bash
+pip install --user "numpy<2" opencv-python pandas matplotlib pymavlink MAVProxy PySide6
+pip install --user --no-deps pyqtgraph
+```
+`pyqtgraph` is installed with `--no-deps` so that pip does not upgrade numpy. Versions in use: numpy 1.26.4, opencv-python 4.13, PySide6 6.10, pyqtgraph 0.14, MAVProxy 1.8.74.
+
+### Network
+
+Gazebo and ROS 2 pick a network interface when they start. If Wi-Fi drops while the simulation is running, the simulation fails. Keep both on the loopback interface by adding to `~/.bashrc`:
+```bash
+export GZ_IP=127.0.0.1
+export ROS_LOCALHOST_ONLY=1
+```
+
+### Gimbal camera rate (optional)
+
+The upstream gimbal camera (`ardupilot_gazebo/models/gimbal_small_3d/model.sdf`) publishes at 10 Hz (`<update_rate>10</update_rate>`). It can be raised (for example to 30 Hz) by editing that value. Localization is limited by its processing time (~110 ms per frame), so results are not very sensitive to it, but optical flow gets more frames. Check the rate with `ros2 topic hz /camera/image`.
+
 ---
 
 ## Launch Architecture & Workflows
@@ -77,12 +107,12 @@ Extract features from the recorded survey frames into a map database:
 ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-This writes `~/frames_<timestamp>/map_sift.npz`. Other methods: `--method ORB | AKAZE | BRISK`, with `--n-features` (SIFT/ORB) or `--threshold` (AKAZE/BRISK).
+This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK`, with `--n-features` (SIFT/ORB) or `--threshold` (AKAZE/BRISK).
 
 Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
 
 ```bash
-ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift.npz
+ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift_n2000.npz
 ```
 
 Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior.
@@ -98,7 +128,7 @@ Open `config/visual_nav_params.yaml` and set `db_path` to your generated `.npz` 
 ```yaml
 visual_estimator_node:
   ros__parameters:
-    db_path: "~/frames_<timestamp>/map_sift.npz"  # the feature method is read from the map
+    db_path: "~/frames_<timestamp>/map_sift_n2000.npz"  # the feature method is read from the map
 ```
 
 You can also tune flight speed, target coordinates (`target_pos_x`, `target_pos_y`), and PID control gains in this file.
@@ -158,7 +188,7 @@ ros2 run gnss_denied_nav nav_gcs --ros-args \
     --params-file $(ros2 pkg prefix gnss_denied_nav)/share/gnss_denied_nav/config/visual_nav_params.yaml
 ```
 
-The Navigation tab compares the visual estimate with Gazebo ground truth (`/odometry`): map frames, true / estimated / EKF paths, the matched map frame and search radius, localization status, errors, speeds, altitude and matcher statistics. It needs `pyqtgraph` (`pip install --user pyqtgraph`).
+The Navigation tab compares the visual estimate with Gazebo ground truth (`/odometry`): map frames, true / estimated / EKF paths, the matched map frame and search radius, localization status, errors, speeds, altitude and matcher statistics. It needs PySide6 and `pyqtgraph` (see [Python packages](#python-packages)).
 
 ---
 

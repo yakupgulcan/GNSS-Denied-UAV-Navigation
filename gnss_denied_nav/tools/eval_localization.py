@@ -7,7 +7,7 @@ from the map (leave-one-out), so the result reflects matching against
 neighbouring frames only.
 
 Usage:
-    ros2 run gnss_denied_nav eval_localization --db ~/frames_X/map_sift.npz
+    ros2 run gnss_denied_nav eval_localization --db ~/frames_X/map_sift_n2000.npz
     ros2 run gnss_denied_nav eval_localization --db map.npz --queries ~/frames_Y --mode global
     ... --csv results.csv --stride 3
 

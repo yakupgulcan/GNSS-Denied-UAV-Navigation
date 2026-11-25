@@ -5,7 +5,8 @@ Usage:
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method SIFT
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method ORB --n-features 3000
 
-Writes <frames_dir>/map_<method>.npz unless --out is given.
+Writes <frames_dir>/map_<method>_<params>.npz (e.g. map_sift_n2000.npz) unless
+--out is given, so maps built with different settings sit side by side.
 """
 import argparse
 import os
@@ -14,6 +15,16 @@ import time
 
 from gnss_denied_nav.localization.database import MapDatabase
 from gnss_denied_nav.localization.features import EXTRACTORS, create_extractor
+
+
+_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o'}
+
+
+def default_db_name(extractor):
+    """map_<method>_<params>.npz, e.g. map_sift_n2000.npz, map_brisk_t60_o0.npz."""
+    tags = [f'{_PARAM_TAGS.get(k, k)}{v:g}' if isinstance(v, float) else f'{_PARAM_TAGS.get(k, k)}{v}'
+            for k, v in extractor.params.items()]
+    return '_'.join(['map', extractor.name.lower(), *tags]) + '.npz'
 
 
 def main(argv=None):
@@ -33,7 +44,7 @@ def main(argv=None):
         params['threshold'] = args.threshold
     extractor = create_extractor(args.method, **params)
     out = os.path.expanduser(args.out) if args.out else os.path.join(
-        frames_dir, f'map_{extractor.name.lower()}.npz')
+        frames_dir, default_db_name(extractor))
 
     def progress(done, total):
         if done % 50 == 0 or done == total:

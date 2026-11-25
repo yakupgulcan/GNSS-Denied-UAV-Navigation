@@ -193,6 +193,22 @@ class ArduTakeoffNode(Node):
         rclpy.spin_until_future_complete(self, fut)
         return fut.result().success
 
+    def arm_with_retry(self, timeout=180.0, interval=2.0):
+        """Retry arming until ArduPilot pre-arm checks pass (e.g. EKF position estimate)."""
+        self.get_logger().info("Arming (waiting for pre-arm checks / EKF position estimate)...")
+        start = self.get_clock().now()
+        while rclpy.ok():
+            if self.set_mode('GUIDED') and self.arm():
+                self.get_logger().info("Armed.")
+                return True
+            if (self.get_clock().now() - start) > Duration(seconds=timeout):
+                self.get_logger().error("Arming timed out.")
+                return False
+            end = time.monotonic() + interval
+            while time.monotonic() < end:
+                rclpy.spin_once(self, timeout_sec=0.1)
+        return False
+
     def takeoff(self):
         self.takeoff_cli.wait_for_service()
         req = CommandTOL.Request()
@@ -304,11 +320,13 @@ def main():
     if not node.wait_for_connection():
         return
     node.wait_for_gps()
-    node.set_mode('GUIDED')
-    node.arm()
+    if not node.arm_with_retry():
+        return
     time.sleep(1)
 
-    node.takeoff()
+    if not node.takeoff():
+        node.get_logger().error("Takeoff command rejected.")
+        return
     node.wait_alt()
     node.set_gimbal_down()
 

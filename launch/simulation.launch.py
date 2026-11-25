@@ -128,7 +128,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "fcu_url": "udp://127.0.0.1:14550@14555",
+                "fcu_url": "udp://127.0.0.1:14550@",
             }
         ],
     )
