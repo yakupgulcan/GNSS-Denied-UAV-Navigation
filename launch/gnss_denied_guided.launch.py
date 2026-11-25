@@ -3,7 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -79,17 +79,23 @@ def generate_launch_description():
         output="screen",
     )
 
-    visual_estimator = Node(
-        package="gnss_denied_nav",
-        executable="visual_estimator",
-        parameters=[
-            LaunchConfiguration("params_file"),
-            # The autopilot needs a valid position from the ground: start at
-            # the known home position.
-            {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir")},
-        ],
-        output="screen",
-    )
+    db_path_arg = DeclareLaunchArgument(
+        "db_path", default_value="",
+        description="Map database (.npz); empty = db_path from params_file")
+
+    def make_visual_estimator(context):
+        # The autopilot needs a valid position from the ground: start at the
+        # known home position. db_path overrides params_file only when given.
+        overrides = {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir")}
+        db_path = LaunchConfiguration("db_path").perform(context).strip()
+        if db_path:
+            overrides["db_path"] = db_path
+        return [Node(
+            package="gnss_denied_nav",
+            executable="visual_estimator",
+            parameters=[LaunchConfiguration("params_file"), overrides],
+            output="screen",
+        )]
 
     gps_input_bridge = Node(
         package="gnss_denied_nav",
@@ -98,12 +104,26 @@ def generate_launch_description():
         output="screen",
     )
 
-    guided_mission = Node(
-        package="gnss_denied_nav",
-        executable="guided_mission",
-        parameters=[LaunchConfiguration("params_file")],
-        output="screen",
-    )
+    target_x_arg = DeclareLaunchArgument(
+        "target_x", default_value="",
+        description="Target east (m); empty = target_pos_x from params_file")
+    target_y_arg = DeclareLaunchArgument(
+        "target_y", default_value="",
+        description="Target north (m), e.g. 1000 for short tests; empty = target_pos_y from params_file")
+
+    def make_guided_mission(context):
+        # Launch arguments override the target in params_file only when given.
+        overrides = {}
+        for arg, param in (("target_x", "target_pos_x"), ("target_y", "target_pos_y")):
+            value = LaunchConfiguration(arg).perform(context).strip()
+            if value:
+                overrides[param] = float(value)
+        return [Node(
+            package="gnss_denied_nav",
+            executable="guided_mission",
+            parameters=[LaunchConfiguration("params_file"), overrides],
+            output="screen",
+        )]
 
     perf_metrics_logger = Node(
         package="gnss_denied_nav",
@@ -118,6 +138,9 @@ def generate_launch_description():
         world_arg,
         enable_logger_arg,
         gui_arg,
+        db_path_arg,
+        target_x_arg,
+        target_y_arg,
         # Run directory under log_dir; SITL/MAVProxy files land there too.
         *run_logging_actions([scenario_params]),
         simulation,
@@ -129,7 +152,7 @@ def generate_launch_description():
 
         TimerAction(
             period=66.0,
-            actions=[visual_estimator, perf_metrics_logger],
+            actions=[OpaqueFunction(function=make_visual_estimator), perf_metrics_logger],
         ),
 
         TimerAction(
@@ -140,6 +163,6 @@ def generate_launch_description():
         # The mission node waits for the EKF position itself before arming.
         TimerAction(
             period=72.0,
-            actions=[guided_mission],
+            actions=[OpaqueFunction(function=make_guided_mission)],
         ),
     ])

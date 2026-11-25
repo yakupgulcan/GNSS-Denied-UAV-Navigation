@@ -209,6 +209,7 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 - **`gps_input_bridge`** converts `/visual_gps` to `/mavros/gps_input/gps_input`. If the estimate goes stale the stream stops and ArduPilot's failsafes apply.
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
 - `base_controller` and `navigation_runner` are not used. The Gazebo GUI is off by default; add `gui:=true` to show it.
+- `db_path:=<map.npz>` flies with another map than the one in `visual_nav_params.yaml` (e.g. a SuperPoint map), and `target_x:=` / `target_y:=` override the target (e.g. `target_y:=1000` for a short test flight).
 
 ---
 
