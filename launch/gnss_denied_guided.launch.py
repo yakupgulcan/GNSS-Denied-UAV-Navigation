@@ -36,8 +36,8 @@ def generate_launch_description():
 
     gui_arg = DeclareLaunchArgument(
         "gui",
-        default_value="true",
-        description="Start the Gazebo GUI",
+        default_value="false",
+        description="Start the Gazebo GUI (off by default to save CPU/GPU for localization)",
     )
 
     enable_logger_arg = DeclareLaunchArgument(

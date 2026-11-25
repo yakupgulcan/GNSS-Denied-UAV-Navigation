@@ -9,7 +9,7 @@ visual_estimator_node:
   ros__parameters:
     # Map database built with build_map_db (the feature method is read from it).
     # Legacy build_feature_database_* files are still accepted.
-    db_path: "~/frames_2026-11-02_15-19-00/features_db_sift_2000.npz"
+    db_path: "~/frames_2026-11-25_09-44-28/map_sift_n2000.npz"
 
     # GPS reference origin for ENU conversions
     start_lat: -35.3766471
@@ -26,6 +26,9 @@ visual_estimator_node:
 
     # Map frames matched per camera frame, nearest to the predicted position
     max_candidates: 3
+    # Stop at the first candidate whose fix has this many inliers (0 = try all).
+    # Measured offline: ~40% less time, same accuracy.
+    accept_inliers: 150
 
     # Search radius around the predicted position (m); grows without fixes
     search_radius: 40.0
