@@ -47,9 +47,7 @@ setup(
 
             # Utility nodes
             'save_frames = gnss_denied_nav.save_frames:main',
-            'save_logs = gnss_denied_nav.save_logs:main',
             'optical_flow = gnss_denied_nav.optical_flow:main',
-            'perf_metrics_logger = gnss_denied_nav.perf_metrics_logger:main',
             'takeoff_stabilize_p_controller = gnss_denied_nav.takeoff_stabilize_p_controller:main',
             'follow_waypoints = gnss_denied_nav.follow_waypoints:main',
             'follow_local_wp = gnss_denied_nav.follow_local_wp:main',

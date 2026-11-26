@@ -4,7 +4,6 @@ from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -38,12 +37,6 @@ def generate_launch_description():
         "gui",
         default_value="false",
         description="Start the Gazebo GUI (off by default to save CPU/GPU for localization)",
-    )
-
-    enable_logger_arg = DeclareLaunchArgument(
-        "enable_logger",
-        default_value="true",
-        description="Automatically record visual performance metrics and ground-truth errors to CSV",
     )
 
     scenario_params = os.path.join(
@@ -86,7 +79,7 @@ def generate_launch_description():
     def make_visual_estimator(context):
         # The autopilot needs a valid position from the ground: start at the
         # known home position. db_path overrides params_file only when given.
-        overrides = {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir"),
+        overrides = {"init_at_home": True,
                      **launch_overrides(context.launch_configurations)[ESTIMATOR_NODE]}
         return [Node(
             package="gnss_denied_nav",
@@ -119,18 +112,9 @@ def generate_launch_description():
             output="screen",
         )]
 
-    perf_metrics_logger = Node(
-        package="gnss_denied_nav",
-        executable="perf_metrics_logger",
-        parameters=[{"run_dir": LaunchConfiguration("run_dir")}],
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("enable_logger")),
-    )
-
     return LaunchDescription([
         params_file_arg,
         world_arg,
-        enable_logger_arg,
         gui_arg,
         db_path_arg,
         target_x_arg,
@@ -146,7 +130,7 @@ def generate_launch_description():
 
         TimerAction(
             period=66.0,
-            actions=[OpaqueFunction(function=make_visual_estimator), perf_metrics_logger],
+            actions=[OpaqueFunction(function=make_visual_estimator)],
         ),
 
         TimerAction(

@@ -11,7 +11,8 @@ and everything a run produces goes there:
     meta.json                            what was flown (see describe_run)
     *.yaml, *.param                      parameter files as used
     mav.tlog, eeprom.bin, logs/*.BIN     ArduPilot SITL / MAVProxy (launch cwd)
-    bag/                                 rosbag of the navigation topics
+    bag/                                 rosbag of the navigation topics: the
+                                         run record, read by analyze_run
 
 ArduPilot SITL and MAVProxy write into their working directory, so the
 launch process changes into the run directory before starting them. This
@@ -34,7 +35,7 @@ DEFAULT_LOG_DIR = '~/gnss_nav_logs'
 # recorded message carries its own (simulation) header stamp anyway.
 BAG_TOPICS = [
     '/odometry',
-    '/visual_gps', '/visual_pose_enu', '/visual_perf_metrics',
+    '/visual_gps', '/visual_pose_enu',
     '/visual_nav/diagnostics', '/visual_nav/map_frames',
     '/visual_velocity_enu', '/visual_velocity_body',
     '/mavros/state', '/mavros/global_position/global', '/mavros/global_position/rel_alt',
@@ -42,15 +43,6 @@ BAG_TOPICS = [
     '/mavros/local_position/velocity_local', '/mavros/gps_input/gps_input',
     '/mavros/setpoint_raw/global', '/mavros/setpoint_raw/target_global',
 ]
-
-
-def resolve_run_dir(run_dir=''):
-    """Run directory for a node: the given one, or a fresh one under DEFAULT_LOG_DIR."""
-    if not run_dir:
-        run_dir = os.path.join(DEFAULT_LOG_DIR, datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    run_dir = os.path.expanduser(run_dir)
-    os.makedirs(run_dir, exist_ok=True)
-    return run_dir
 
 
 ESTIMATOR_NODE = 'visual_estimator_node'
@@ -233,7 +225,7 @@ def run_logging_actions(files_to_copy=(), pipeline='guided', mission_node='guide
 
     Declares the launch arguments log_dir, record_bag, bag_images, tag and
     note, creates the run directory with meta.json, changes into it, sets the
-    launch configuration 'run_dir' and optionally starts rosbag.
+    launch configuration 'run_dir' and starts rosbag (unless record_bag:=false).
     Place the returned actions before the simulation include.
     """
     from launch.actions import (DeclareLaunchArgument, ExecuteProcess, OpaqueFunction,
@@ -255,7 +247,7 @@ def run_logging_actions(files_to_copy=(), pipeline='guided', mission_node='guide
             json.dump(meta, f, indent=2)
 
         actions = [SetLaunchConfiguration('run_dir', run_dir)]
-        if cfg.get('record_bag', 'false').lower() == 'true':
+        if cfg.get('record_bag', 'true').lower() == 'true':
             topics = BAG_TOPICS + (['/camera/image']
                                    if cfg.get('bag_images', 'false').lower() == 'true' else [])
             actions.append(ExecuteProcess(
@@ -272,8 +264,9 @@ def run_logging_actions(files_to_copy=(), pipeline='guided', mission_node='guide
     return [
         DeclareLaunchArgument('log_dir', default_value=DEFAULT_LOG_DIR,
                               description='Parent directory of the per-run log directories'),
-        DeclareLaunchArgument('record_bag', default_value='false',
-                              description='Record a rosbag of navigation topics into the run directory'),
+        DeclareLaunchArgument('record_bag', default_value='true',
+                              description='Record a rosbag of the navigation topics '
+                                          '(the run record that analyze_run reads)'),
         DeclareLaunchArgument('bag_images', default_value='false',
                               description='Also record /camera/image in the rosbag (large)'),
         DeclareLaunchArgument('tag', default_value='',
