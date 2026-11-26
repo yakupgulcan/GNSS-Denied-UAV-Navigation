@@ -44,6 +44,7 @@ setup(
             # Map building and offline evaluation
             'build_map_db = gnss_denied_nav.tools.build_map_db:main',
             'eval_localization = gnss_denied_nav.tools.eval_localization:main',
+            'analyze_run = gnss_denied_nav.tools.analyze_run:main',
 
             # Utility nodes
             'save_frames = gnss_denied_nav.save_frames:main',
