@@ -149,7 +149,7 @@ Extract features from the recorded survey frames into a map database:
 ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
+This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK) and `--octaves` (BRISK, default 0 = single scale). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
 
 Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
 
@@ -157,7 +157,17 @@ Check the map offline before flying. This localizes every survey frame against i
 ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift_n2000.npz
 ```
 
-Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior. Use `--candidates 3` to match the flight setting (`max_candidates`).
+Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior. `--candidates` and `--accept-inliers` default to the visual estimator's `max_candidates` and `accept_inliers` in the installed `visual_nav_params.yaml`, so offline results use the flight settings.
+
+Each evaluation is saved like a flight, in `~/gnss_nav_logs/offline/<time>_<queries>_<method>_<settings>[_<tag>]/`:
+- **`eval.json`**: settings, the map (method, settings, SHA-256), code state, and the metrics (fix ratio, position / reference-tag / heading error, time per query, rejection reasons).
+- **`frames.csv`**: one row per query frame.
+
+In the name:
+- `<queries>` is `loo-<survey>` for leave-one-out, otherwise the query directory name.
+- `<settings>` is e.g. `c3-ai150` (candidates, accept_inliers), plus `global`, `nohdg` or `hn<deg>` when those options are used.
+
+`--tag` and `--note` label a run, and `--no-save` only prints the results.
 
 A heading prior (the frame's heading plus `--heading-noise`, 5° by default) is given like the autopilot's compass heading in flight. It rejects fixes whose heading disagrees by more than 30°, and for SuperPoint, which is not rotation invariant, it turns the query image by multiples of 90° towards each map frame (survey lanes alternate north/south). `--no-heading` disables it. `--accept-inliers N` stops at the first candidate (nearest first) whose fix has `N` inliers; in flight this is the `accept_inliers` parameter of the visual estimator (0 = try all candidates).
 
@@ -219,6 +229,7 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
 - `base_controller` and `navigation_runner` are not used. The Gazebo GUI is off by default; add `gui:=true` to show it.
 - `db_path:=<map.npz>` flies with another map than the one in `visual_nav_params.yaml` (e.g. a SuperPoint map), and `target_x:=` / `target_y:=` override the target (e.g. `target_y:=1000` for a short test flight).
+- `max_candidates:=` and `accept_inliers:=` override the localizer settings for ablation flights. They are recorded in `meta.json` and added to the run directory name (e.g. `_c5-ai0`).
 
 ---
 
