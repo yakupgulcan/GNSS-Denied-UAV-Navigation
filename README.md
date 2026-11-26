@@ -195,14 +195,12 @@ This single command automatically:
    - **`visual_estimator`**: Matches incoming camera frames against the map database around the predicted position and publishes the ENU position.
    - **`base_controller`**: Translates position and velocity commands into MAVLink RC Overrides (`ALT_HOLD` mode).
    - **`navigation_runner`**: Autonomous planner that tracks waypoints toward the target position.
-   - **`perf_metrics_logger`**: Records visual localization errors against Gazebo ground-truth odometry to `perf_metrics.csv` in the run directory.
 
-*(Optional)* You can customize the test world, parameters file, or logger:
+*(Optional)* You can customize the test world or the parameters file:
 ```bash
 ros2 launch gnss_denied_nav gnss_denied_navigation.launch.py \
     world:=map_changed.sdf \
-    params_file:=/path/to/custom_params.yaml \
-    enable_logger:=true
+    params_file:=/path/to/custom_params.yaml
 ```
 
 ---
@@ -237,24 +235,55 @@ The Navigation tab compares the visual estimate with Gazebo ground truth (`/odom
 
 ---
 
-### Step 5: Performance Analysis & Benchmarking
+### Step 5: Run Logs and Analysis
 
-Every navigation launch writes into its own run directory, `~/gnss_nav_logs/<date>_<time>_<world>/` (change the parent with `log_dir:=<dir>`):
-- **`perf_metrics.csv`**: timestamp, algorithm, match duration (ms), status (`MATCH` / `OUTLIER`), estimated and ground-truth (`/odometry`) coordinates, and Euclidean error (m).
-- **`visual_log.csv`**: accepted map fixes with inlier count and estimated uncertainty.
-- **`run_meta.json`** and copies of the parameter files used.
-- ArduPilot SITL / MAVProxy files (`mav.tlog`, `logs/*.BIN`, `eeprom.bin`, ...). The launch starts SITL inside the run directory, so every run also starts from a fresh SITL eeprom.
-- **`bag/`**: a rosbag of the navigation topics with `record_bag:=true` (add `bag_images:=true` to include camera images).
+Every navigation launch writes into its own run directory under `~/gnss_nav_logs/` (change the parent with `log_dir:=<dir>`). The name tells the runs apart:
 
-```bash
-ros2 launch gnss_denied_nav gnss_denied_guided.launch.py record_bag:=true
+```text
+<date>_<time>_<world>_<method>-<settings>_<route>[_<tag>]
+e.g. 2026-11-26_14-02-11_map_changed_orb-n2000_1km
 ```
 
-To plot a run report (route, errors, match rate, latency) for the newest run, or for a given CSV:
+The directory holds:
+- **`meta.json`**, which describes what was flown:
+  - the world and the route
+  - the map database: method and settings read from the database itself, plus its SHA-256
+  - the parameters each node used, after launch overrides
+  - the git commit, uncommitted files, and source files that differ from the installed copy (a rebuild was missing)
+  - the launch command
+- **`bag/`**, a rosbag of the navigation topics. This is the record of the run: ground truth (`/odometry`), EKF, visual estimate, per-frame localization diagnostics, GPS_INPUT and vehicle state.
+  - It is on by default; `record_bag:=false` turns it off.
+  - `bag_images:=true` also records the camera images (large).
+- Copies of the parameter files, and the ArduPilot SITL / MAVProxy files (`mav.tlog`, `logs/*.BIN`, `eeprom.bin`, ...). SITL starts inside the run directory, so every run starts from a fresh eeprom.
+
+Optional labels: `tag:=<label>` is appended to the directory name, and `note:="<text>"` is stored in `meta.json`.
+
+Every run is then evaluated by the same script:
 
 ```bash
-python3 src/gnss_denied_nav/gnss_denied_nav/plot_run_report.py [~/gnss_nav_logs/<run>/perf_metrics.csv]
+ros2 run gnss_denied_nav analyze_run                     # newest run
+ros2 run gnss_denied_nav analyze_run <run_dir> [...]     # given runs
+ros2 run gnss_denied_nav analyze_run --all               # every run with a bag
 ```
+
+It writes into the run directory:
+- **`summary.json`**: all metrics of the run.
+- **`timeseries.csv`**: a 0.1 s grid of truth, EKF and estimate positions, their errors and the route offsets.
+- **`localization.csv`**: one row per processed camera frame, with status, processing time, inliers, matched map frame and fix error.
+- **`plots/`**: trajectory, errors along the route, route following, error CDF, localization timing and inliers, speed and altitude.
+
+It also prints a one-line summary per run.
+
+Definitions used for every run:
+- **Evaluation window:** from arming (take-off) to the switch to `LAND`. Landing is not evaluated.
+- **Time:** simulation time.
+- **Truth:** Gazebo `/odometry`, relative to the take-off point.
+- **Error:** distance to the truth at the same time, for three positions:
+  - the EKF (`/mavros/global_position/global`)
+  - the published estimate (`/visual_gps`, the input to GPS_INPUT)
+  - the raw map fixes, each at its image time
+- **Along/cross:** the error components relative to the true direction of travel, during cruise (speed > 1.5 m/s, height > 20 m).
+- **Route following:** the true distance from the straight line between home and the target, and the distance to the target when `LAND` starts.
 
 ---
 
@@ -280,17 +309,19 @@ gnss_denied_nav/
 │   └── simulation_setup.md        # Environment setup and dependencies guide
 ├── gnss_denied_nav/
 │   ├── localization/              # ROS-free localization core (features, matching, geometry, map database)
-│   ├── tools/                     # build_map_db, eval_localization
+│   ├── tools/                     # build_map_db, eval_localization, analyze_run
 │   ├── base_controller.py         # RC override PID flight controller
 │   ├── follow_local_wp.py         # Parametric survey mission generator
 │   ├── nav_gcs.py                 # Ground control visualization GUI
 │   ├── navigation_runner.py       # High-level waypoint planner & safety logic
 │   ├── optical_flow.py            # Optical flow velocity estimation
+│   ├── run_logging.py             # Run directories, meta.json and rosbag recording
 │   ├── save_frames.py             # Synchronous image & telemetry recorder
 │   └── visual_estimator.py        # Core visual localization node
 ├── launch/
 │   ├── gnss_available_data_collection.launch.py  # Automated mapping pipeline
-│   ├── gnss_denied_navigation.launch.py          # Autonomous navigation pipeline
+│   ├── gnss_denied_guided.launch.py              # Navigation via GPS_INPUT + GUIDED
+│   ├── gnss_denied_navigation.launch.py          # Navigation via RC overrides (ALT_HOLD)
 │   ├── iris_custom.launch.py                     # Iris quadcopter spawn & SITL
 │   └── simulation.launch.py                      # Simulation & MAVROS bringup
 ├── models/                        # Gazebo drone & world models
