@@ -47,6 +47,10 @@ BAG_TOPICS = [
 
 ESTIMATOR_NODE = 'visual_estimator_node'
 
+# Localizer settings that can be set per run from the launch command:
+# launch argument / parameter name -> short label in the run directory name.
+LOCALIZER_ARGS = {'max_candidates': 'c', 'accept_inliers': 'ai'}
+
 
 def launch_overrides(cfg, mission_node='guided_mission'):
     """Node parameters set by launch arguments, by node name.
@@ -59,6 +63,10 @@ def launch_overrides(cfg, mission_node='guided_mission'):
     db_path = (cfg.get('db_path') or '').strip()
     if db_path:
         out[ESTIMATOR_NODE]['db_path'] = db_path
+    for name in LOCALIZER_ARGS:
+        value = (cfg.get(name) or '').strip()
+        if value:
+            out[ESTIMATOR_NODE][name] = int(value)
     for arg, param in (('target_x', 'target_pos_x'), ('target_y', 'target_pos_y')):
         value = (cfg.get(arg) or '').strip()
         if value:
@@ -83,7 +91,7 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _map_info(db_path):
+def map_info(db_path):
     """Method and settings of the map database (read from its own metadata)."""
     info = {'db_path': db_path, 'method': 'unknown', 'params': {}}
     path = os.path.expanduser(db_path or '')
@@ -133,7 +141,7 @@ def _git(src, *args):
                           timeout=10).stdout
 
 
-def _code_info():
+def code_info():
     """Git state of the source, and source files that differ from the installed copy.
 
     ``ros2 launch``/``ros2 run`` use the installed copy: a non-empty
@@ -187,7 +195,8 @@ def _route_label(distance_m):
 def describe_run(cfg, pipeline, mission_node):
     """Everything needed to identify and reproduce a run (written to meta.json)."""
     params = _yaml_params(cfg.get('params_file', ''))
-    for node, values in launch_overrides(cfg, mission_node).items():
+    overrides = launch_overrides(cfg, mission_node)
+    for node, values in overrides.items():
         params.setdefault(node, {}).update(values)
     estimator = params.get(ESTIMATOR_NODE, {})
     mission = params.get(mission_node, {})
@@ -199,12 +208,14 @@ def describe_run(cfg, pipeline, mission_node):
         'started': datetime.now().isoformat(timespec='seconds'),
         'pipeline': pipeline,
         'world': world,
-        'map': _map_info(estimator.get('db_path')),
+        'map': map_info(estimator.get('db_path')),
         'route': {'target_x': tx, 'target_y': ty, 'distance_m': distance,
                   'altitude_m': mission.get('target_altitude')},
+        'localizer_overrides': {k: v for k, v in overrides[ESTIMATOR_NODE].items()
+                                if k in LOCALIZER_ARGS},
         'tag': (cfg.get('tag') or '').strip(),
         'note': (cfg.get('note') or '').strip(),
-        'code': _code_info(),
+        'code': code_info(),
         'parameters': params,
         'command': ' '.join(sys.argv),
         'launch_arguments': dict(cfg),
@@ -212,9 +223,17 @@ def describe_run(cfg, pipeline, mission_node):
 
 
 def run_name(meta, stamp):
-    """<stamp>_<world>_<method>_<route>[_<tag>], filesystem-safe."""
+    """<stamp>_<world>_<method>_<route>[_<localizer overrides>][_<tag>], filesystem-safe.
+
+    Localizer settings given on the launch command are part of the name
+    (e.g. c5-ai0 for max_candidates:=5 accept_inliers:=0), so ablation runs
+    do not look like runs with the default settings.
+    """
     parts = [stamp, meta['world'], meta['map'].get('label', meta['map']['method'].lower()),
              _route_label(meta['route']['distance_m'])]
+    settings = meta.get('localizer_overrides') or {}
+    if settings:
+        parts.append('-'.join(f'{LOCALIZER_ARGS[k]}{v}' for k, v in settings.items()))
     if meta['tag']:
         parts.append(meta['tag'])
     return re.sub(r'[^A-Za-z0-9._-]+', '-', '_'.join(parts))
@@ -223,9 +242,10 @@ def run_name(meta, stamp):
 def run_logging_actions(files_to_copy=(), pipeline='guided', mission_node='guided_mission'):
     """Launch actions that set up the run directory.
 
-    Declares the launch arguments log_dir, record_bag, bag_images, tag and
-    note, creates the run directory with meta.json, changes into it, sets the
-    launch configuration 'run_dir' and starts rosbag (unless record_bag:=false).
+    Declares the launch arguments log_dir, record_bag, bag_images,
+    max_candidates, accept_inliers, tag and note, creates the run directory
+    with meta.json, changes into it, sets the launch configuration 'run_dir'
+    and starts rosbag (unless record_bag:=false).
     Place the returned actions before the simulation include.
     """
     from launch.actions import (DeclareLaunchArgument, ExecuteProcess, OpaqueFunction,
@@ -269,6 +289,11 @@ def run_logging_actions(files_to_copy=(), pipeline='guided', mission_node='guide
                                           '(the run record that analyze_run reads)'),
         DeclareLaunchArgument('bag_images', default_value='false',
                               description='Also record /camera/image in the rosbag (large)'),
+        DeclareLaunchArgument('max_candidates', default_value='',
+                              description='Map frames matched per camera frame; empty = params_file'),
+        DeclareLaunchArgument('accept_inliers', default_value='',
+                              description='Stop at the first fix with this many inliers (0 = try all); '
+                                          'empty = params_file'),
         DeclareLaunchArgument('tag', default_value='',
                               description='Optional label appended to the run directory name'),
         DeclareLaunchArgument('note', default_value='',

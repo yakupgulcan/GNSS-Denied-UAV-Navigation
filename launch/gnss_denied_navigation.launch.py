@@ -3,13 +3,13 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-from gnss_denied_nav.run_logging import run_logging_actions
+from gnss_denied_nav.run_logging import ESTIMATOR_NODE, launch_overrides, run_logging_actions
 
 
 def generate_launch_description():
@@ -65,12 +65,16 @@ def generate_launch_description():
         output="screen",
     )
 
-    visual_estimator = Node(
-        package="gnss_denied_nav",
-        executable="visual_estimator",
-        parameters=[LaunchConfiguration("params_file")],
-        output="screen",
-    )
+    def make_visual_estimator(context):
+        # Localizer settings given on the launch command (recorded in meta.json).
+        overrides = launch_overrides(context.launch_configurations,
+                                     "visual_navigation_planner")[ESTIMATOR_NODE]
+        return [Node(
+            package="gnss_denied_nav",
+            executable="visual_estimator",
+            parameters=[LaunchConfiguration("params_file"), overrides],
+            output="screen",
+        )]
 
     base_controller = Node(
         package="gnss_denied_nav",
@@ -101,7 +105,7 @@ def generate_launch_description():
 
         TimerAction(
             period=66.0,
-            actions=[visual_estimator],
+            actions=[OpaqueFunction(function=make_visual_estimator)],
         ),
 
         TimerAction(
