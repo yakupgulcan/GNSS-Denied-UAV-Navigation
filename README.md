@@ -149,7 +149,7 @@ Extract features from the recorded survey frames into a map database:
 ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
+This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK) and `--octaves` (BRISK, default 0 = single scale). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
 
 Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
 
@@ -157,7 +157,17 @@ Check the map offline before flying. This localizes every survey frame against i
 ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift_n2000.npz
 ```
 
-Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior. Use `--candidates 3` to match the flight setting (`max_candidates`).
+Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior. `--candidates` and `--accept-inliers` default to the visual estimator's `max_candidates` and `accept_inliers` in the installed `visual_nav_params.yaml`, so offline results use the flight settings.
+
+Each evaluation is saved like a flight, in `~/gnss_nav_logs/offline/<time>_<queries>_<method>_<settings>[_<tag>]/`:
+- **`eval.json`**: settings, the map (method, settings, SHA-256), code state, and the metrics (fix ratio, position / reference-tag / heading error, time per query, rejection reasons).
+- **`frames.csv`**: one row per query frame.
+
+In the name:
+- `<queries>` is `loo-<survey>` for leave-one-out, otherwise the query directory name.
+- `<settings>` is e.g. `c3-ai150` (candidates, accept_inliers), plus `global`, `nohdg` or `hn<deg>` when those options are used.
+
+`--tag` and `--note` label a run, and `--no-save` only prints the results.
 
 A heading prior (the frame's heading plus `--heading-noise`, 5° by default) is given like the autopilot's compass heading in flight. It rejects fixes whose heading disagrees by more than 30°, and for SuperPoint, which is not rotation invariant, it turns the query image by multiples of 90° towards each map frame (survey lanes alternate north/south). `--no-heading` disables it. `--accept-inliers N` stops at the first candidate (nearest first) whose fix has `N` inliers; in flight this is the `accept_inliers` parameter of the visual estimator (0 = try all candidates).
 
@@ -195,14 +205,12 @@ This single command automatically:
    - **`visual_estimator`**: Matches incoming camera frames against the map database around the predicted position and publishes the ENU position.
    - **`base_controller`**: Translates position and velocity commands into MAVLink RC Overrides (`ALT_HOLD` mode).
    - **`navigation_runner`**: Autonomous planner that tracks waypoints toward the target position.
-   - **`perf_metrics_logger`**: Records visual localization errors against Gazebo ground-truth odometry to `perf_metrics.csv` in the run directory.
 
-*(Optional)* You can customize the test world, parameters file, or logger:
+*(Optional)* You can customize the test world or the parameters file:
 ```bash
 ros2 launch gnss_denied_nav gnss_denied_navigation.launch.py \
     world:=map_changed.sdf \
-    params_file:=/path/to/custom_params.yaml \
-    enable_logger:=true
+    params_file:=/path/to/custom_params.yaml
 ```
 
 ---
@@ -221,6 +229,7 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
 - `base_controller` and `navigation_runner` are not used. The Gazebo GUI is off by default; add `gui:=true` to show it.
 - `db_path:=<map.npz>` flies with another map than the one in `visual_nav_params.yaml` (e.g. a SuperPoint map), and `target_x:=` / `target_y:=` override the target (e.g. `target_y:=1000` for a short test flight).
+- `max_candidates:=` and `accept_inliers:=` override the localizer settings for ablation flights. They are recorded in `meta.json` and added to the run directory name (e.g. `_c5-ai0`).
 
 ---
 
@@ -237,24 +246,55 @@ The Navigation tab compares the visual estimate with Gazebo ground truth (`/odom
 
 ---
 
-### Step 5: Performance Analysis & Benchmarking
+### Step 5: Run Logs and Analysis
 
-Every navigation launch writes into its own run directory, `~/gnss_nav_logs/<date>_<time>_<world>/` (change the parent with `log_dir:=<dir>`):
-- **`perf_metrics.csv`**: timestamp, algorithm, match duration (ms), status (`MATCH` / `OUTLIER`), estimated and ground-truth (`/odometry`) coordinates, and Euclidean error (m).
-- **`visual_log.csv`**: accepted map fixes with inlier count and estimated uncertainty.
-- **`run_meta.json`** and copies of the parameter files used.
-- ArduPilot SITL / MAVProxy files (`mav.tlog`, `logs/*.BIN`, `eeprom.bin`, ...). The launch starts SITL inside the run directory, so every run also starts from a fresh SITL eeprom.
-- **`bag/`**: a rosbag of the navigation topics with `record_bag:=true` (add `bag_images:=true` to include camera images).
+Every navigation launch writes into its own run directory under `~/gnss_nav_logs/` (change the parent with `log_dir:=<dir>`). The name tells the runs apart:
 
-```bash
-ros2 launch gnss_denied_nav gnss_denied_guided.launch.py record_bag:=true
+```text
+<date>_<time>_<world>_<method>-<settings>_<route>[_<tag>]
+e.g. 2026-11-26_14-02-11_map_changed_orb-n2000_1km
 ```
 
-To plot a run report (route, errors, match rate, latency) for the newest run, or for a given CSV:
+The directory holds:
+- **`meta.json`**, which describes what was flown:
+  - the world and the route
+  - the map database: method and settings read from the database itself, plus its SHA-256
+  - the parameters each node used, after launch overrides
+  - the git commit, uncommitted files, and source files that differ from the installed copy (a rebuild was missing)
+  - the launch command
+- **`bag/`**, a rosbag of the navigation topics. This is the record of the run: ground truth (`/odometry`), EKF, visual estimate, per-frame localization diagnostics, GPS_INPUT and vehicle state.
+  - It is on by default; `record_bag:=false` turns it off.
+  - `bag_images:=true` also records the camera images (large).
+- Copies of the parameter files, and the ArduPilot SITL / MAVProxy files (`mav.tlog`, `logs/*.BIN`, `eeprom.bin`, ...). SITL starts inside the run directory, so every run starts from a fresh eeprom.
+
+Optional labels: `tag:=<label>` is appended to the directory name, and `note:="<text>"` is stored in `meta.json`.
+
+Every run is then evaluated by the same script:
 
 ```bash
-python3 src/gnss_denied_nav/gnss_denied_nav/plot_run_report.py [~/gnss_nav_logs/<run>/perf_metrics.csv]
+ros2 run gnss_denied_nav analyze_run                     # newest run
+ros2 run gnss_denied_nav analyze_run <run_dir> [...]     # given runs
+ros2 run gnss_denied_nav analyze_run --all               # every run with a bag
 ```
+
+It writes into the run directory:
+- **`summary.json`**: all metrics of the run.
+- **`timeseries.csv`**: a 0.1 s grid of truth, EKF and estimate positions, their errors and the route offsets.
+- **`localization.csv`**: one row per processed camera frame, with status, processing time, inliers, matched map frame and fix error.
+- **`plots/`**: trajectory, errors along the route, route following, error CDF, localization timing and inliers, speed and altitude.
+
+It also prints a one-line summary per run.
+
+Definitions used for every run:
+- **Evaluation window:** from arming (take-off) to the switch to `LAND`. Landing is not evaluated.
+- **Time:** simulation time.
+- **Truth:** Gazebo `/odometry`, relative to the take-off point.
+- **Error:** distance to the truth at the same time, for three positions:
+  - the EKF (`/mavros/global_position/global`)
+  - the published estimate (`/visual_gps`, the input to GPS_INPUT)
+  - the raw map fixes, each at its image time
+- **Along/cross:** the error components relative to the true direction of travel, during cruise (speed > 1.5 m/s, height > 20 m).
+- **Route following:** the true distance from the straight line between home and the target, and the distance to the target when `LAND` starts.
 
 ---
 
@@ -280,17 +320,19 @@ gnss_denied_nav/
 │   └── simulation_setup.md        # Environment setup and dependencies guide
 ├── gnss_denied_nav/
 │   ├── localization/              # ROS-free localization core (features, matching, geometry, map database)
-│   ├── tools/                     # build_map_db, eval_localization
+│   ├── tools/                     # build_map_db, eval_localization, analyze_run
 │   ├── base_controller.py         # RC override PID flight controller
 │   ├── follow_local_wp.py         # Parametric survey mission generator
 │   ├── nav_gcs.py                 # Ground control visualization GUI
 │   ├── navigation_runner.py       # High-level waypoint planner & safety logic
 │   ├── optical_flow.py            # Optical flow velocity estimation
+│   ├── run_logging.py             # Run directories, meta.json and rosbag recording
 │   ├── save_frames.py             # Synchronous image & telemetry recorder
 │   └── visual_estimator.py        # Core visual localization node
 ├── launch/
 │   ├── gnss_available_data_collection.launch.py  # Automated mapping pipeline
-│   ├── gnss_denied_navigation.launch.py          # Autonomous navigation pipeline
+│   ├── gnss_denied_guided.launch.py              # Navigation via GPS_INPUT + GUIDED
+│   ├── gnss_denied_navigation.launch.py          # Navigation via RC overrides (ALT_HOLD)
 │   ├── iris_custom.launch.py                     # Iris quadcopter spawn & SITL
 │   └── simulation.launch.py                      # Simulation & MAVROS bringup
 ├── models/                        # Gazebo drone & world models

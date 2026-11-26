@@ -114,3 +114,23 @@ def test_accept_inliers_stops_at_first_strong_fix(world):
     res, info = early.localize(img, prior=(0.0, 0.0), radius=50.0)
     assert info_all['n_tried'] == 3 and info['n_tried'] == 1
     assert res is not None and math.hypot(res.x - 3.0, res.y - 8.0) < 0.5
+
+
+def test_voting_retriever_accepts_float16_queries():
+    """Learned extractors store float16 descriptors; FLANN needs float32."""
+    from types import SimpleNamespace as NS
+    from gnss_denied_nav.localization.retrieval import VotingRetriever
+    from gnss_denied_nav.localization.types import Features
+
+    class Db(NS):
+        def __len__(self):
+            return 3
+
+    rng = np.random.default_rng(0)
+    desc = rng.standard_normal((30, 8)).astype(np.float16)
+    db = Db(desc=desc, offsets=np.array([0, 10, 20, 30]),
+            enu=np.array([[0.0, 0.0], [0.0, 100.0], [0.0, 200.0]]))
+    retriever = VotingRetriever(db, binary=False, k=2)
+    query = Features(np.zeros((10, 2), np.float32), desc[10:20], (640, 480))
+    out = retriever.retrieve(query, max_count=1, min_votes=5)
+    assert out and out[0][0] == 1

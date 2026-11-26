@@ -3,14 +3,13 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-from gnss_denied_nav.run_logging import run_logging_actions
+from gnss_denied_nav.run_logging import ESTIMATOR_NODE, launch_overrides, run_logging_actions
 
 
 def generate_launch_description():
@@ -32,12 +31,6 @@ def generate_launch_description():
         "world",
         default_value="map_changed.sdf",
         description="Gazebo world file for GNSS-denied test flight (default: map_changed.sdf)",
-    )
-
-    enable_logger_arg = DeclareLaunchArgument(
-        "enable_logger",
-        default_value="true",
-        description="Automatically record visual performance metrics and ground-truth errors to CSV",
     )
 
     scenario_params = os.path.join(
@@ -72,13 +65,16 @@ def generate_launch_description():
         output="screen",
     )
 
-    visual_estimator = Node(
-        package="gnss_denied_nav",
-        executable="visual_estimator",
-        parameters=[LaunchConfiguration("params_file"),
-                    {"run_dir": LaunchConfiguration("run_dir")}],
-        output="screen",
-    )
+    def make_visual_estimator(context):
+        # Localizer settings given on the launch command (recorded in meta.json).
+        overrides = launch_overrides(context.launch_configurations,
+                                     "visual_navigation_planner")[ESTIMATOR_NODE]
+        return [Node(
+            package="gnss_denied_nav",
+            executable="visual_estimator",
+            parameters=[LaunchConfiguration("params_file"), overrides],
+            output="screen",
+        )]
 
     base_controller = Node(
         package="gnss_denied_nav",
@@ -94,20 +90,12 @@ def generate_launch_description():
         output="screen",
     )
 
-    perf_metrics_logger = Node(
-        package="gnss_denied_nav",
-        executable="perf_metrics_logger",
-        parameters=[{"run_dir": LaunchConfiguration("run_dir")}],
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("enable_logger")),
-    )
-
     return LaunchDescription([
         params_file_arg,
         world_arg,
-        enable_logger_arg,
         # Run directory under log_dir; SITL/MAVProxy files land there too.
-        *run_logging_actions([scenario_params]),
+        *run_logging_actions([scenario_params], pipeline='alt_hold',
+                             mission_node='visual_navigation_planner'),
         simulation,
 
         TimerAction(
@@ -117,7 +105,7 @@ def generate_launch_description():
 
         TimerAction(
             period=66.0,
-            actions=[visual_estimator, perf_metrics_logger],
+            actions=[OpaqueFunction(function=make_visual_estimator)],
         ),
 
         TimerAction(

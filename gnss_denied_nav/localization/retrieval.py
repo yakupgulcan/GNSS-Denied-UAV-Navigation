@@ -22,6 +22,7 @@ class VotingRetriever:
         self.ratio = ratio
         self.k = k
         self.distinct_m = distinct_m
+        self.binary = binary
         self.enu = db.enu
         self.n_frames = len(db)
         self.frame_of = np.repeat(np.arange(len(db)), np.diff(db.offsets)).astype(np.int32)
@@ -42,7 +43,9 @@ class VotingRetriever:
             return []
         excluded = set(int(i) for i in exclude)
         votes = np.zeros(self.n_frames, dtype=np.int32)
-        for neighbours in self.matcher.knnMatch(query.desc, k=self.k):
+        # The index holds float32; learned extractors return float16 descriptors.
+        desc = query.desc if self.binary else np.asarray(query.desc, np.float32)
+        for neighbours in self.matcher.knnMatch(desc, k=self.k):
             best = None
             for m in neighbours:
                 f = self.frame_of[m.trainIdx]

@@ -9,7 +9,6 @@ between fixes with optical-flow velocity.
 Localization itself lives in gnss_denied_nav.localization (ROS-free); this
 node only feeds it frames, gates and blends its fixes, and publishes poses.
 """
-import csv
 import json
 import math
 import os
@@ -29,7 +28,6 @@ from sensor_msgs.msg import Image, NavSatFix
 from std_msgs.msg import Float64, String
 
 from gnss_denied_nav import geo
-from gnss_denied_nav.run_logging import resolve_run_dir
 from gnss_denied_nav.localization import (
     CameraModel, Localizer, LocalizerConfig, MapDatabase)
 
@@ -63,7 +61,6 @@ class VisualEstimatorNode(Node):
         # valid from the ground and the first database fix is gated like any other.
         self.declare_parameter('init_at_home', False)
         # Directory for this run's logs (set by the launch file; default ~/gnss_nav_logs/<time>).
-        self.declare_parameter('run_dir', '')
 
         db_path = os.path.expanduser(self.get_parameter('db_path').value)
         self.start_lat = float(self.get_parameter('start_lat').value)
@@ -103,12 +100,6 @@ class VisualEstimatorNode(Node):
         self.get_logger().info(
             f'Map ready: {db.method}, {len(db)} frames, {len(db.kpts)} features.')
 
-        # CSV log
-        run_dir = resolve_run_dir(self.get_parameter('run_dir').value)
-        self.csv_file = open(os.path.join(run_dir, 'visual_log.csv'), 'w', newline='')
-        self.csv_writer = csv.writer(self.csv_file)
-        self.csv_writer.writerow(['timestamp', 'source', 'x', 'y', 'inliers', 'sigma_m'])
-
         # --- State ---
         self.mavros_state = State()
         self.is_localized = self.init_at_home
@@ -128,7 +119,6 @@ class VisualEstimatorNode(Node):
         # --- Publishers & Subscriptions ---
         qos_sensor = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                                 history=HistoryPolicy.KEEP_LAST, depth=1)
-        self.pub_metrics = self.create_publisher(String, '/visual_perf_metrics', 10)
         self.pose_pub = self.create_publisher(PoseStamped, '/visual_pose_enu', 10)
         self.gps_publisher = self.create_publisher(NavSatFix, '/visual_gps', qos_sensor)
         # Per-frame localization details (JSON) for the GCS, loggers and debugging.
@@ -219,7 +209,7 @@ class VisualEstimatorNode(Node):
         heading = self.compass_heading if now - self.compass_time < 2.0 else None
         fix, info = self.localizer.localize(gray, prior, radius, heading=heading)
 
-        status, est_x, est_y = 'NO_MATCH', 0.0, 0.0
+        status = 'NO_MATCH'
         if fix is not None and not self.is_localized:
             self.get_logger().warn(
                 f'[{self.algorithm}] FIRST FIX: X={fix.x:.1f}, Y={fix.y:.1f} '
@@ -227,7 +217,7 @@ class VisualEstimatorNode(Node):
             self.current_x, self.current_y = fix.x, fix.y
             self.is_localized = True
             self.last_db_success_time = now
-            status, est_x, est_y = 'MATCH_INIT', fix.x, fix.y
+            status = 'MATCH_INIT'
 
         elif fix is not None:
             speed = math.hypot(self.current_vel_x, self.current_vel_y)
@@ -239,10 +229,9 @@ class VisualEstimatorNode(Node):
                 a = self.SMOOTHING_ALPHA
                 self.current_x = a * fix.x + (1 - a) * self.current_x
                 self.current_y = a * fix.y + (1 - a) * self.current_y
-                status, est_x, est_y = 'MATCH', self.current_x, self.current_y
-                self.log_to_csv('DB_MATCH', self.current_x, self.current_y, fix)
+                status = 'MATCH'
             else:
-                status, est_x, est_y = 'OUTLIER', fix.x, fix.y
+                status = 'OUTLIER'
                 self.get_logger().warn(f'Outlier: {dist_error:.1f}m > {acceptable_diff:.1f}m')
 
         elif since_fix > 10.0 and now - self.last_timeout_warn > 5.0:
@@ -251,9 +240,6 @@ class VisualEstimatorNode(Node):
                 f'No map fix for {since_fix:.0f}s: dead reckoning only '
                 f'(search radius {radius or 0:.0f} m).')
 
-        # Format: "ALGORITHM,STATUS,DURATION(ms),EST_X,EST_Y"
-        self.pub_metrics.publish(String(
-            data=f"{self.algorithm},{status},{info['ms_total']:.2f},{est_x:.2f},{est_y:.2f}"))
         self.publish_diagnostics(stamp, status, fix, info, radius)
 
     def publish_diagnostics(self, stamp, status, fix, info, radius):
@@ -320,16 +306,6 @@ class VisualEstimatorNode(Node):
         gps_msg.latitude = lat
         gps_msg.longitude = lon
         self.gps_publisher.publish(gps_msg)
-
-    def log_to_csv(self, source, x, y, fix):
-        timestamp = self.get_clock().now().nanoseconds / 1e9
-        self.csv_writer.writerow([timestamp, source, x, y, fix.n_inliers, f'{fix.sigma_m:.2f}'])
-        self.csv_file.flush()
-
-    def destroy_node(self):
-        if hasattr(self, 'csv_file'):
-            self.csv_file.close()
-        super().destroy_node()
 
 
 def main(args=None):

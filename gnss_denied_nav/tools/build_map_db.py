@@ -4,6 +4,7 @@
 Usage:
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method SIFT
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method ORB --n-features 3000
+    ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method BRISK --threshold 60 --octaves 3
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method SUPERPOINT --n-features 1024
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method ELOFTR --scale 0.5
 
@@ -15,18 +16,13 @@ import os
 import sys
 import time
 
-from gnss_denied_nav.localization.database import MapDatabase
+from gnss_denied_nav.localization.database import MapDatabase, method_tags
 from gnss_denied_nav.localization.features import EXTRACTORS, create_extractor
-
-
-_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o', 'detection_threshold': 't', 'scale': 's'}
 
 
 def default_db_name(extractor):
     """map_<method>_<params>.npz, e.g. map_sift_n2000.npz, map_brisk_t60_o0.npz."""
-    tags = [f'{_PARAM_TAGS.get(k, k)}{v:g}' if isinstance(v, float) else f'{_PARAM_TAGS.get(k, k)}{v}'
-            for k, v in extractor.params.items()]
-    return '_'.join(['map', extractor.name.lower(), *tags]) + '.npz'
+    return '_'.join(['map', *method_tags(extractor.name, extractor.params)]) + '.npz'
 
 
 def main(argv=None):
@@ -35,6 +31,7 @@ def main(argv=None):
     ap.add_argument('--method', default='SIFT', choices=sorted(EXTRACTORS))
     ap.add_argument('--n-features', type=int, help='SIFT/ORB/SUPERPOINT feature count')
     ap.add_argument('--threshold', type=float, help='AKAZE/BRISK detector threshold')
+    ap.add_argument('--octaves', type=int, help='BRISK detection octaves (default 0 = single scale)')
     ap.add_argument('--scale', type=float, help='ELOFTR image scale for matching (default 1.0)')
     ap.add_argument('--out', help='output .npz path')
     args = ap.parse_args(argv)
@@ -45,6 +42,8 @@ def main(argv=None):
         params['n_features'] = args.n_features
     if args.threshold is not None:
         params['threshold'] = args.threshold
+    if args.octaves is not None:
+        params['octaves'] = args.octaves
     if args.scale is not None:
         params['scale'] = args.scale
     extractor = create_extractor(args.method, **params)
