@@ -47,3 +47,22 @@ def test_missing_database_is_reported(tmp_path):
     meta = describe_run({'world': 'w.sdf', 'db_path': str(tmp_path / 'none.npz')}, 'guided', 'guided_mission')
     assert meta['map']['method'] == 'unknown' and 'error' in meta['map']
     assert run_name(meta, 'S') == 'S_w_unknown_route'
+
+
+def test_localizer_overrides_in_name(tmp_path):
+    db = tmp_path / 'map_orb_n2000.npz'
+    _write_db(db)
+    cfg = {'world': 'map_changed.sdf', 'db_path': str(db), 'max_candidates': '5', 'accept_inliers': '0'}
+    meta = describe_run(cfg, 'guided', 'guided_mission')
+    assert meta['parameters']['visual_estimator_node']['max_candidates'] == 5
+    assert meta['localizer_overrides'] == {'max_candidates': 5, 'accept_inliers': 0}
+    assert run_name(meta, 'S') == 'S_map_changed_orb-n2000_route_c5-ai0'
+
+
+def test_offline_settings_label():
+    from types import SimpleNamespace as NS
+    from gnss_denied_nav.tools.eval_localization import settings_label
+    base = dict(candidates=3, accept_inliers=150, mode='prior', no_heading=False, heading_noise=5.0)
+    assert settings_label(NS(**base)) == 'c3-ai150'
+    assert settings_label(NS(**{**base, 'accept_inliers': 0, 'no_heading': True})) == 'c3-ai0-nohdg'
+    assert settings_label(NS(**{**base, 'mode': 'global', 'heading_noise': 30.0})) == 'c3-ai150-global-hn30'
