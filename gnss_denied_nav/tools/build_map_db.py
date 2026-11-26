@@ -15,18 +15,13 @@ import os
 import sys
 import time
 
-from gnss_denied_nav.localization.database import MapDatabase
+from gnss_denied_nav.localization.database import MapDatabase, method_tags
 from gnss_denied_nav.localization.features import EXTRACTORS, create_extractor
-
-
-_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o', 'detection_threshold': 't', 'scale': 's'}
 
 
 def default_db_name(extractor):
     """map_<method>_<params>.npz, e.g. map_sift_n2000.npz, map_brisk_t60_o0.npz."""
-    tags = [f'{_PARAM_TAGS.get(k, k)}{v:g}' if isinstance(v, float) else f'{_PARAM_TAGS.get(k, k)}{v}'
-            for k, v in extractor.params.items()]
-    return '_'.join(['map', extractor.name.lower(), *tags]) + '.npz'
+    return '_'.join(['map', *method_tags(extractor.name, extractor.params)]) + '.npz'
 
 
 def main(argv=None):

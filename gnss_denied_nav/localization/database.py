@@ -33,6 +33,20 @@ from gnss_denied_nav.localization.types import Features
 FORMAT_VERSION = 1
 
 
+_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o', 'detection_threshold': 't', 'scale': 's'}
+
+
+def method_tags(method, params):
+    """Short name parts of a method and its settings, e.g. ['sift', 'n2000'].
+
+    Used for database file names (map_sift_n2000.npz) and run directory
+    names (..._sift-n2000_...), so both name the same settings the same way.
+    """
+    tags = [f'{_PARAM_TAGS.get(k, k)}{v:g}' if isinstance(v, float) else f'{_PARAM_TAGS.get(k, k)}{v}'
+            for k, v in (params or {}).items()]
+    return [method.lower(), *tags]
+
+
 class MapDatabase:
 
     def __init__(self, method, params, image_size, filenames, lat, lon, heading, rel_alt,
@@ -149,6 +163,12 @@ class MapDatabase:
             offsets=self.offsets, kpts=self.kpts, desc=self.desc)
 
     # ------------------------------------------------------------------ load
+    @staticmethod
+    def read_meta(path):
+        """Metadata of a database file without loading its arrays (None for legacy files)."""
+        with np.load(os.path.expanduser(path), allow_pickle=False) as z:
+            return json.loads(str(z['meta'])) if 'meta' in z.files else None
+
     @classmethod
     def load(cls, path):
         path = os.path.expanduser(path)

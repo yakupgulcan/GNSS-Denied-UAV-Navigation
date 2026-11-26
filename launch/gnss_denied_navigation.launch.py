@@ -107,7 +107,8 @@ def generate_launch_description():
         world_arg,
         enable_logger_arg,
         # Run directory under log_dir; SITL/MAVProxy files land there too.
-        *run_logging_actions([scenario_params]),
+        *run_logging_actions([scenario_params], pipeline='alt_hold',
+                             mission_node='visual_navigation_planner'),
         simulation,
 
         TimerAction(

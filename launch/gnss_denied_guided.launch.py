@@ -10,7 +10,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-from gnss_denied_nav.run_logging import run_logging_actions
+from gnss_denied_nav.run_logging import ESTIMATOR_NODE, launch_overrides, run_logging_actions
 
 
 def generate_launch_description():
@@ -86,10 +86,8 @@ def generate_launch_description():
     def make_visual_estimator(context):
         # The autopilot needs a valid position from the ground: start at the
         # known home position. db_path overrides params_file only when given.
-        overrides = {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir")}
-        db_path = LaunchConfiguration("db_path").perform(context).strip()
-        if db_path:
-            overrides["db_path"] = db_path
+        overrides = {"init_at_home": True, "run_dir": LaunchConfiguration("run_dir"),
+                     **launch_overrides(context.launch_configurations)[ESTIMATOR_NODE]}
         return [Node(
             package="gnss_denied_nav",
             executable="visual_estimator",
@@ -113,11 +111,7 @@ def generate_launch_description():
 
     def make_guided_mission(context):
         # Launch arguments override the target in params_file only when given.
-        overrides = {}
-        for arg, param in (("target_x", "target_pos_x"), ("target_y", "target_pos_y")):
-            value = LaunchConfiguration(arg).perform(context).strip()
-            if value:
-                overrides[param] = float(value)
+        overrides = launch_overrides(context.launch_configurations)["guided_mission"]
         return [Node(
             package="gnss_denied_nav",
             executable="guided_mission",
