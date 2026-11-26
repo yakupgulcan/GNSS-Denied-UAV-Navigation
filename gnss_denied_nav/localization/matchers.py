@@ -35,4 +35,11 @@ class DescriptorMatcher:
 
 
 def create_matcher(extractor, ratio=0.8):
+    """Matcher for the extractor's features (ratio only applies to descriptor matching)."""
+    if getattr(extractor, 'matcher', None) == 'eloftr':
+        from gnss_denied_nav.localization.eloftr import EfficientLoFTRMatcher
+        return EfficientLoFTRMatcher(scale=extractor.params.get('scale', 1.0), device=extractor.device)
+    if getattr(extractor, 'matcher', None) == 'lightglue':
+        from gnss_denied_nav.localization.learned import LightGlueMatcher
+        return LightGlueMatcher('superpoint', device=extractor.device)
     return DescriptorMatcher(binary=extractor.binary, ratio=ratio)

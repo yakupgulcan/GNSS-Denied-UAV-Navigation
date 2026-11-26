@@ -15,6 +15,10 @@ Modes:
     prior   search around the true position plus Gaussian noise (--prior-noise),
             like tracking after the first fix
     global  no prior: voting retrieval over the whole map (first fix)
+
+A heading prior (the frame's heading tag plus --heading-noise) is given in
+both modes, as the autopilot's compass heading is in flight. --no-heading
+disables it.
 """
 import argparse
 import csv
@@ -41,7 +45,13 @@ def main(argv=None):
     ap.add_argument('--mode', choices=['prior', 'global'], default='prior')
     ap.add_argument('--prior-noise', type=float, default=10.0, help='prior position noise, 1-sigma (m)')
     ap.add_argument('--radius', type=float, default=60.0, help='prior search radius (m)')
+    ap.add_argument('--heading-noise', type=float, default=5.0,
+                    help='heading prior noise, 1-sigma (deg); the prior is the frame heading plus noise')
+    ap.add_argument('--no-heading', action='store_true',
+                    help='no heading prior (no query rotation for SuperPoint, no heading check)')
     ap.add_argument('--candidates', type=int, default=5)
+    ap.add_argument('--accept-inliers', type=int,
+                    help='stop at the first candidate whose fix has this many inliers (default: try all)')
     ap.add_argument('--hfov', type=float, default=2.0, help='camera horizontal FOV (rad)')
     ap.add_argument('--stride', type=int, default=1, help='use every n-th query frame')
     ap.add_argument('--seed', type=int, default=0)
@@ -64,8 +74,11 @@ def main(argv=None):
 
     w, h = db.image_size
     loc = Localizer(db, CameraModel(w, h, args.hfov),
-                    LocalizerConfig(max_candidates=args.candidates,
+                    LocalizerConfig(max_candidates=args.candidates, accept_inliers=args.accept_inliers,
                                     global_retrieval=args.mode == 'global'))
+    if args.mode == 'global' and db.image_based:
+        print(f'{db.method} is image-based: no descriptors for global retrieval; use --mode prior')
+        return 1
     rng = np.random.default_rng(args.seed)
     print(f'{db.method} map: {len(db)} frames | {len(entries)} queries from {qdir} | '
           f'mode={args.mode}{" (leave-one-out)" if leave_one_out else ""}')
@@ -80,7 +93,10 @@ def main(argv=None):
         prior = None
         if args.mode == 'prior':
             prior = (gt[0] + rng.normal(0, args.prior_noise), gt[1] + rng.normal(0, args.prior_noise))
-        res, info = loc.localize(gray, prior, args.radius, exclude)
+        heading = None
+        if not args.no_heading and e.get('heading') is not None:
+            heading = (e['heading'] + rng.normal(0, args.heading_noise)) % 360.0
+        res, info = loc.localize(gray, prior, args.radius, exclude, heading)
 
         row = {'filename': e['filename'], 'gt_x': gt[0], 'gt_y': gt[1],
                'ms': info['ms_total'], 'n_candidates': len(info['candidates']),

@@ -5,10 +5,13 @@ Every extractor exposes the same interface:
     extractor.name    -> method name stored in the map database ("SIFT", ...)
     extractor.binary  -> True for Hamming-distance descriptors
     extractor.params  -> dict of settings, stored in the database metadata
+    extractor.rotation_invariant -> False if the query must be turned towards
+                         the map frame's heading before matching (SuperPoint)
     extractor.extract(gray_image) -> Features
 
-Learned extractors (e.g. SuperPoint) plug in by implementing the same
-interface and registering in EXTRACTORS.
+Learned extractors (SuperPoint, see learned.py) implement the same interface
+and are registered in EXTRACTORS; they also name their matcher
+(``extractor.matcher``) for ``matchers.create_matcher``.
 """
 import cv2
 import numpy as np
@@ -34,6 +37,7 @@ class OpenCVExtractor:
         self.name = name
         self.params = {**self.DEFAULTS[name], **params}
         self.binary = name != 'SIFT'
+        self.rotation_invariant = True
         self.clahe = None
 
         p = self.params
@@ -64,7 +68,21 @@ class OpenCVExtractor:
         return Features(kpts, desc, (w, h))
 
 
+def _superpoint(name, **params):
+    # Lazy import: torch/lightglue are only required for learned methods.
+    from gnss_denied_nav.localization.learned import SuperPointExtractor
+    return SuperPointExtractor(**params)
+
+
+def _eloftr(name, **params):
+    # Lazy import: transformers is only required for Efficient LoFTR.
+    from gnss_denied_nav.localization.eloftr import ImageExtractor
+    return ImageExtractor(**params)
+
+
 EXTRACTORS = {name: OpenCVExtractor for name in OpenCVExtractor.DEFAULTS}
+EXTRACTORS['SUPERPOINT'] = _superpoint
+EXTRACTORS['ELOFTR'] = _eloftr
 
 
 def create_extractor(name, **params):

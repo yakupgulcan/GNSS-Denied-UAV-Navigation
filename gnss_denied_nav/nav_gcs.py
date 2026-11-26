@@ -170,7 +170,9 @@ class GcsNode(Node):
             self.est = self.to_enu(msg.latitude, msg.longitude)
 
     def ekf_cb(self, msg):
-        if math.isnan(msg.latitude):
+        # Before the EKF has a position, MAVROS publishes lat/lon 0 with
+        # status NO_FIX (-1); drawing it would put a point thousands of km away.
+        if math.isnan(msg.latitude) or msg.status.status < 0:
             return
         with self.lock:
             self.ekf = self.to_enu(msg.latitude, msg.longitude)

@@ -50,6 +50,46 @@ export GZ_IP=127.0.0.1
 export ROS_LOCALHOST_ONLY=1
 ```
 
+### Learned matchers (optional)
+
+Only needed for `--method SUPERPOINT` (SuperPoint features + LightGlue matching) and `--method ELOFTR` (Efficient LoFTR). The classical methods (SIFT, ORB, AKAZE, BRISK) work without these packages. Steps 1-3 are for SuperPoint + LightGlue, step 4 for Efficient LoFTR (which also needs PyTorch and kornia from steps 1-2).
+
+1. **PyTorch with CUDA** (a CPU build also works, but slowly). Pick the command for your driver on [pytorch.org](https://pytorch.org/get-started/locally/), for example:
+   ```bash
+   pip install --user torch torchvision --index-url https://download.pytorch.org/whl/cu128
+   ```
+   Then check that numpy is still below 2 (`python3 -c "import numpy; print(numpy.__version__)"`). Tested with torch 2.10.0+cu128 and torchvision 0.25.
+
+2. **kornia and LightGlue**, without dependencies so pip does not touch numpy or torch:
+   ```bash
+   pip install --user --no-deps kornia==0.8.1 kornia_rs==0.1.9
+
+   # LightGlue is built in a temporary venv and the wheel installed with the system pip
+   env -u PYTHONPATH python3 -m venv /tmp/lg_build
+   env -u PYTHONPATH /tmp/lg_build/bin/pip wheel --no-deps -w /tmp/lg_wheel \
+     "git+https://github.com/cvg/LightGlue.git@5a650c444718caffc2669dc0094cde908f42dd73"
+   pip install --user --no-deps /tmp/lg_wheel/lightglue-0.0-py3-none-any.whl
+   rm -rf /tmp/lg_build /tmp/lg_wheel
+
+   python3 -c "import lightglue, kornia; print('ok')"
+   ```
+   On Ubuntu 22.04 the system pip (22.0.2) builds LightGlue as an empty package named `UNKNOWN` (`pip install git+https://github.com/cvg/LightGlue.git` reports success, but `import lightglue` fails). Building the wheel in a plain venv avoids it.
+
+3. **Weights** (SuperPoint ~5 MB, LightGlue ~45 MB) are downloaded automatically on first use into `~/.cache/torch/hub/checkpoints`.
+
+4. **Efficient LoFTR** uses the official code, for inference only. Do not install the repository's `requirements.txt` (old pinned training dependencies); three small packages are enough:
+   ```bash
+   pip install --user --no-deps einops==0.8.1 yacs==0.1.8 loguru==0.7.3
+   git clone https://github.com/zju3dv/EfficientLoFTR.git ~/third_party/EfficientLoFTR
+   git -C ~/third_party/EfficientLoFTR checkout 07e9c1401e71e9c556b1fda9d86d060af36ba176
+   mkdir -p ~/third_party/EfficientLoFTR/weights
+   ```
+   Download `eloftr_outdoor.ckpt` from the [pretrained model folder](https://drive.google.com/drive/folders/1GOw6iVqsB-f1vmG6rNmdCcgwfB4VZ7_Q?usp=sharing) linked in the Efficient LoFTR README into `~/third_party/EfficientLoFTR/weights/`. Set `ELOFTR_ROOT` if the repository is elsewhere. The weights are read with `torch.load(weights_only=True)`; PyTorch Lightning is not needed. The model runs in fp16 on CUDA (measured: same accuracy as fp32, ~1.7x faster).
+
+   The Hugging Face `transformers` port of Efficient LoFTR is not used: in transformers 5.2 its outputs pair the points wrongly when the images are rotated, and the sub-pixel refinement has no effect.
+
+The SuperPoint weights are released by Magic Leap for non-commercial research use only; LightGlue is Apache-2.0. The Efficient LoFTR code is under the authors' Project Registration License (free for academic use; organizations register for project use).
+
 ### Gimbal camera rate (optional)
 
 The upstream gimbal camera (`ardupilot_gazebo/models/gimbal_small_3d/model.sdf`) publishes at 10 Hz (`<update_rate>10</update_rate>`). It can be raised (for example to 30 Hz) by editing that value. Localization is limited by its processing time (~110 ms per frame), so results are not very sensitive to it, but optical flow gets more frames. Check the rate with `ros2 topic hz /camera/image`.
@@ -97,6 +137,8 @@ ros2 launch gnss_denied_nav gnss_available_data_collection.launch.py \
 ```
 *(For a single-lane survey along a specific corridor, e.g. at X=40, set `target_x:=40.0 corridor_width:=0.0`)*
 
+The survey is flown in `map_original.sdf` by default. Use `world:=map_changed.sdf` to record a query set in the changed world, then evaluate a map against it with `eval_localization --queries <frames_dir>` (Step 2).
+
 ---
 
 ### Step 2: Build the Map Database
@@ -107,7 +149,7 @@ Extract features from the recorded survey frames into a map database:
 ros2 run gnss_denied_nav build_map_db ~/frames_<timestamp> --method SIFT
 ```
 
-This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK`, with `--n-features` (SIFT/ORB) or `--threshold` (AKAZE/BRISK).
+This writes `~/frames_<timestamp>/map_sift_n2000.npz` (method + settings in the name, so e.g. `--n-features 500` gives `map_sift_n500.npz` next to it). Other methods: `--method ORB | AKAZE | BRISK | SUPERPOINT`, with `--n-features` (SIFT/ORB/SUPERPOINT) or `--threshold` (AKAZE/BRISK). `SUPERPOINT` uses LightGlue for matching and needs the [learned matcher packages](#learned-matchers-optional); the default is 1024 keypoints (`map_superpoint_n1024_t0.0005.npz`). `ELOFTR` (Efficient LoFTR) is detector-free: the map stores no features, only the frame poses, and the survey images are read from the frames directory at run time, so keep the map next to its images (`map_eloftr_s1.npz`; `--scale 0.5` matches at half resolution). It has no descriptors, so `--mode global` is not available for it. The matcher is chosen from the map, so the visual estimator and `eval_localization` need no extra settings.
 
 Check the map offline before flying. This localizes every survey frame against its neighbours (leave-one-out) and reports position error, heading error and latency:
 
@@ -115,7 +157,9 @@ Check the map offline before flying. This localizes every survey frame against i
 ros2 run gnss_denied_nav eval_localization --db ~/frames_<timestamp>/map_sift_n2000.npz
 ```
 
-Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior.
+Add `--queries <other_frames_dir>` to evaluate frames from a different flight, and `--mode global` to test localization without a position prior. Use `--candidates 3` to match the flight setting (`max_candidates`).
+
+A heading prior (the frame's heading plus `--heading-noise`, 5° by default) is given like the autopilot's compass heading in flight. It rejects fixes whose heading disagrees by more than 30°, and for SuperPoint, which is not rotation invariant, it turns the query image by multiples of 90° towards each map frame (survey lanes alternate north/south). `--no-heading` disables it. `--accept-inliers N` stops at the first candidate (nearest first) whose fix has `N` inliers; in flight this is the `accept_inliers` parameter of the visual estimator (0 = try all candidates).
 
 ---
 
@@ -175,7 +219,8 @@ ros2 launch gnss_denied_nav gnss_denied_guided.launch.py
 - **`visual_estimator`** starts localized at the known take-off point (`init_at_home`), so the pose is valid on the ground and the first database fix is gated like any other.
 - **`gps_input_bridge`** converts `/visual_gps` to `/mavros/gps_input/gps_input`. If the estimate goes stale the stream stops and ArduPilot's failsafes apply.
 - **`guided_mission`** waits for the EKF position, then switches to `GUIDED`, arms, takes off, flies to the target and lands.
-- `base_controller` and `navigation_runner` are not used. Add `gui:=false` to run without the Gazebo GUI.
+- `base_controller` and `navigation_runner` are not used. The Gazebo GUI is off by default; add `gui:=true` to show it.
+- `db_path:=<map.npz>` flies with another map than the one in `visual_nav_params.yaml` (e.g. a SuperPoint map), and `target_x:=` / `target_y:=` override the target (e.g. `target_y:=1000` for a short test flight).
 
 ---
 

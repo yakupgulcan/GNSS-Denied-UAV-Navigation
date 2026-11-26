@@ -4,6 +4,8 @@
 Usage:
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method SIFT
     ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method ORB --n-features 3000
+    ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method SUPERPOINT --n-features 1024
+    ros2 run gnss_denied_nav build_map_db ~/frames_<stamp> --method ELOFTR --scale 0.5
 
 Writes <frames_dir>/map_<method>_<params>.npz (e.g. map_sift_n2000.npz) unless
 --out is given, so maps built with different settings sit side by side.
@@ -17,7 +19,7 @@ from gnss_denied_nav.localization.database import MapDatabase
 from gnss_denied_nav.localization.features import EXTRACTORS, create_extractor
 
 
-_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o'}
+_PARAM_TAGS = {'n_features': 'n', 'threshold': 't', 'octaves': 'o', 'detection_threshold': 't', 'scale': 's'}
 
 
 def default_db_name(extractor):
@@ -31,8 +33,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('frames_dir', help='directory with frames_details.json and images')
     ap.add_argument('--method', default='SIFT', choices=sorted(EXTRACTORS))
-    ap.add_argument('--n-features', type=int, help='SIFT/ORB feature count')
+    ap.add_argument('--n-features', type=int, help='SIFT/ORB/SUPERPOINT feature count')
     ap.add_argument('--threshold', type=float, help='AKAZE/BRISK detector threshold')
+    ap.add_argument('--scale', type=float, help='ELOFTR image scale for matching (default 1.0)')
     ap.add_argument('--out', help='output .npz path')
     args = ap.parse_args(argv)
 
@@ -42,6 +45,8 @@ def main(argv=None):
         params['n_features'] = args.n_features
     if args.threshold is not None:
         params['threshold'] = args.threshold
+    if args.scale is not None:
+        params['scale'] = args.scale
     extractor = create_extractor(args.method, **params)
     out = os.path.expanduser(args.out) if args.out else os.path.join(
         frames_dir, default_db_name(extractor))
